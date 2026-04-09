@@ -70,25 +70,51 @@ These are not equal in product importance:
 
 ## Portable Startup
 
-## Clone And Start
+## Install Into Another Project
 
-If you are pulling this from GitHub into an empty or existing project folder, clone the repo contents first:
+If you are using this repo as the source for a portable Jarvis install, do not clone the whole repository into the target project. That will pull `production/`, which is only for building Jarvis itself.
+
+For an empty or existing target project folder, use sparse checkout so you only pull:
+- `.nexus/`
+- `jarvis-ui/`
+
+SSH version:
 
 ```bash
-git clone git@github.com:exiamu/startup_test.git .
+git init
+git remote add origin git@github.com:exiamu/startup_test.git
+git sparse-checkout init --cone
+git sparse-checkout set .nexus jarvis-ui
+git pull origin main
 ```
 
-Then start Jarvis from the project root:
+HTTPS version:
+
+```bash
+git init
+git remote add origin https://github.com/exiamu/startup_test.git
+git sparse-checkout init --cone
+git sparse-checkout set .nexus jarvis-ui
+git pull origin main
+```
+
+Then start Jarvis from the target project root:
 
 ```bash
 bash .nexus/scripts/init.sh
 bash .nexus/scripts/start-jarvis.sh
 ```
 
-If SSH is not configured on your machine, use HTTPS instead:
+## Clone Full Repo
+
+Only clone the full repository if you are working on Jarvis itself, including:
+- `production/`
+- plans
+- architecture docs
+- handoff reports
 
 ```bash
-git clone https://github.com/exiamu/startup_test.git .
+git clone git@github.com:exiamu/startup_test.git
 ```
 
 ## Portable Startup

@@ -11,6 +11,26 @@ Copy only:
 Do not copy:
 - `production/`
 
+## GitHub Install Path
+
+If the source of truth is this GitHub repo, adopting projects should use sparse checkout instead of cloning the full repository.
+
+That keeps the target project limited to the portable payload:
+- `.nexus/`
+- `jarvis-ui/`
+
+Example:
+
+```bash
+git init
+git remote add origin git@github.com:exiamu/startup_test.git
+git sparse-checkout init --cone
+git sparse-checkout set .nexus jarvis-ui
+git pull origin main
+```
+
+Full-repo clone is only for developing Jarvis itself.
+
 ## Local Startup Command
 
 From the target project root:
