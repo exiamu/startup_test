@@ -1,0 +1,51 @@
+name: Jarvis UI CI
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - "jarvis-ui/**"
+      - ".nexus/**"
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+    paths:
+      - "jarvis-ui/**"
+      - ".nexus/**"
+
+permissions:
+  contents: read
+
+jobs:
+  jarvis-ui-build:
+    name: Build Jarvis UI
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: jarvis-ui
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: jarvis-ui/package.json
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: jarvis-ui-build
+          path: |
+            jarvis-ui/.next
+            jarvis-ui/package.json
+            jarvis-ui/next.config.ts

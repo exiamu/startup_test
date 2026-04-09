@@ -1,0 +1,93 @@
+name: NEXUS AI Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  nexus-checks:
+    name: NEXUS Protocol Checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check HANDOFF.md was updated
+        run: |
+          CHANGED=$(git diff origin/${{ github.base_ref }}...HEAD --name-only)
+          if echo "$CHANGED" | grep -q "\.nexus/HANDOFF.md"; then
+            echo "✓ HANDOFF.md updated in this PR"
+          else
+            echo "⚠ WARNING: .nexus/HANDOFF.md was not updated in this PR"
+            echo "Update HANDOFF.md to document what changed and the current session state."
+          fi
+
+      - name: Verify vault/DECISIONS.md integrity (append-only)
+        run: |
+          if git diff origin/${{ github.base_ref }}...HEAD --name-only | grep -q "vault/DECISIONS.md"; then
+            REMOVED=$(git diff origin/${{ github.base_ref }}...HEAD -- .nexus/vault/DECISIONS.md | grep "^-" | grep -v "^---" | wc -l)
+            if [ "$REMOVED" -gt 2 ]; then
+              echo "❌ BLOCKED: vault/DECISIONS.md has $REMOVED deleted lines."
+              echo "vault/DECISIONS.md is append-only. Decisions cannot be removed or retroactively edited."
+              echo "To change a decision: add a new ADR with status SUPERSEDED."
+              exit 1
+            else
+              echo "✓ vault/DECISIONS.md is append-only (no deletions detected)"
+            fi
+          else
+            echo "✓ vault/DECISIONS.md not modified in this PR"
+          fi
+
+      - name: Check for secrets in changed files
+        run: |
+          CHANGED_FILES=$(git diff origin/${{ github.base_ref }}...HEAD --name-only | grep -v "^\.nexus/" || true)
+          if [ -z "$CHANGED_FILES" ]; then
+            echo "No non-NEXUS files changed"
+            exit 0
+          fi
+
+          # Basic secrets detection patterns
+          SECRETS_FOUND=0
+          while IFS= read -r file; do
+            if [ -f "$file" ]; then
+              if grep -iE "(api_key|secret_key|password|private_key|access_token)\s*=\s*['\"][^$\{][^'\"]{8,}" "$file" 2>/dev/null; then
+                echo "❌ Potential secret found in: $file"
+                SECRETS_FOUND=$((SECRETS_FOUND + 1))
+              fi
+            fi
+          done <<< "$CHANGED_FILES"
+
+          if [ "$SECRETS_FOUND" -gt 0 ]; then
+            echo "❌ $SECRETS_FOUND file(s) may contain hardcoded secrets. Review and use environment variables."
+            exit 1
+          else
+            echo "✓ No obvious secrets detected in changed files"
+          fi
+
+  # Uncomment to enable Claude AI review (requires ANTHROPIC_API_KEY secret)
+  # nexus-ai-review:
+  #   name: Claude Code Review
+  #   runs-on: ubuntu-latest
+  #   if: github.event.pull_request.draft == false
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: anthropics/claude-code-action@v1
+  #       with:
+  #         anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+  #         prompt: |
+  #           You are reviewing a PR for a NEXUS-managed project.
+  #           Read .nexus/NEXUS.md for project context.
+  #           Read .nexus/vault/DECISIONS.md for architectural decisions.
+  #           Review the changed files for:
+  #           1. Architecture violations (contradicts vault/DECISIONS.md)
+  #           2. Security issues (OWASP Top 10 quick scan)
+  #           3. Missing tests
+  #           4. Code quality concerns
+  #           Post findings as inline PR comments.
+  #           Lead each comment with [BLOCKER] / [REQUIRED] / [SUGGESTED] / [NITPICK]
+  #         claude_args: "--max-turns 5 --model claude-sonnet-4-6"

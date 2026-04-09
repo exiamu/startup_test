@@ -1,0 +1,47 @@
+{
+  "version": "1",
+  "providers": {
+    "claude": {
+      "enabled": true,
+      "command": "claude",
+      "args": [
+        "--print",
+        "--output-format",
+        "text"
+      ],
+      "inputMethod": "stdin",
+      "credentialEnvVar": "ANTHROPIC_API_KEY",
+      "timeoutSeconds": 120,
+      "maxRetries": 1,
+      "maxTokenSafetyLimit": 32000
+    },
+    "codex": {
+      "enabled": true,
+      "command": "codex",
+      "args": [
+        "--quiet"
+      ],
+      "inputMethod": "stdin",
+      "credentialEnvVar": "OPENAI_API_KEY",
+      "timeoutSeconds": 180,
+      "maxRetries": 1,
+      "maxTokenSafetyLimit": 32000
+    },
+    "gemini": {
+      "enabled": true,
+      "command": "gemini",
+      "args": [],
+      "inputMethod": "stdin",
+      "credentialEnvVar": "GEMINI_API_KEY",
+      "timeoutSeconds": 120,
+      "maxRetries": 1,
+      "maxTokenSafetyLimit": 32000
+    }
+  },
+  "fallbackOrder": [
+    "claude",
+    "codex",
+    "gemini"
+  ],
+  "executionLogDir": "execution"
+}

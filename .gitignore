@@ -1,0 +1,10 @@
+.nexus/execution/
+.nexus/sessions/
+.nexus/.codex
+.codex
+jarvis-ui/node_modules/
+jarvis-ui/.next/
+jarvis-ui/.env.local
+jarvis-ui/tsconfig.tsbuildinfo
+.DS_Store
+Thumbs.db

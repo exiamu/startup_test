@@ -1,0 +1,95 @@
+name: NEXUS Documentation Check
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  docs-check:
+    name: Documentation Health Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check README exists and is non-empty
+        run: |
+          if [ ! -f "README.md" ]; then
+            echo "⚠ No README.md found. Use the writer room to create one:"
+            echo "  bash .nexus/scripts/room-enter.sh writer"
+          elif [ ! -s "README.md" ]; then
+            echo "⚠ README.md is empty."
+          else
+            LINES=$(wc -l < README.md)
+            echo "✓ README.md exists ($LINES lines)"
+          fi
+
+      - name: Check CHANGELOG.md exists
+        run: |
+          if [ ! -f "CHANGELOG.md" ]; then
+            echo "⚠ No CHANGELOG.md found. Create one using the writer room."
+          else
+            echo "✓ CHANGELOG.md exists"
+          fi
+
+      - name: Check NEXUS docs are up to date
+        run: |
+          # Check that HANDOFF.md was touched recently (within 7 days)
+          if [ -f ".nexus/HANDOFF.md" ]; then
+            LAST_MODIFIED=$(git log -1 --format="%ct" -- .nexus/HANDOFF.md 2>/dev/null || echo "0")
+            NOW=$(date +%s)
+            DAYS_OLD=$(( (NOW - LAST_MODIFIED) / 86400 ))
+            if [ "$DAYS_OLD" -gt 7 ]; then
+              echo "⚠ .nexus/HANDOFF.md hasn't been updated in $DAYS_OLD days."
+              echo "  Update HANDOFF.md at the end of every AI session."
+            else
+              echo "✓ HANDOFF.md updated $DAYS_OLD day(s) ago"
+            fi
+          fi
+
+      - name: Check for broken markdown links (basic)
+        run: |
+          # Find markdown files and check for obviously broken internal links
+          BROKEN=0
+          find . -name "*.md" -not -path "./.git/*" -not -path "./node_modules/*" | head -20 | while IFS= read -r file; do
+            # Extract local file links
+            grep -oE '\[([^\]]+)\]\(([^)]+)\)' "$file" 2>/dev/null | grep -oE '\(([^)]+)\)' | tr -d '()' | while IFS= read -r link; do
+              # Skip external links, anchors, and non-file links
+              if [[ "$link" == http* ]] || [[ "$link" == "#"* ]]; then
+                continue
+              fi
+              # Resolve relative to file location
+              DIR=$(dirname "$file")
+              TARGET="$DIR/$link"
+              if [ ! -f "$TARGET" ] && [ ! -d "$TARGET" ]; then
+                echo "⚠ Broken link in $file: $link"
+              fi
+            done
+          done || true
+          echo "✓ Link check complete"
+
+  # Uncomment to enable AI documentation updates (requires ANTHROPIC_API_KEY secret)
+  # ai-docs-update:
+  #   name: Auto-Update Docs on Merge
+  #   runs-on: ubuntu-latest
+  #   if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: anthropics/claude-code-action@v1
+  #       with:
+  #         anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+  #         prompt: |
+  #           A new commit was merged to main. Review the changes and:
+  #           1. Update CHANGELOG.md with any user-visible changes
+  #           2. Update README.md if any APIs or setup steps changed
+  #           3. Update .nexus/HANDOFF.md with the new deployment state
+  #           Keep changes minimal — only update what actually changed.
+  #           Create a commit with message: "docs: auto-update after merge to main"
+  #         claude_args: "--max-turns 5"

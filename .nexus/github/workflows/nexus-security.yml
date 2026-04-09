@@ -1,0 +1,127 @@
+name: NEXUS Security Scan
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+  pull-requests: write
+  security-events: write
+
+jobs:
+  dependency-audit:
+    name: Dependency Vulnerability Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect project type
+        id: detect
+        run: |
+          if [ -f "package.json" ]; then
+            echo "type=node" >> $GITHUB_OUTPUT
+          elif [ -f "pyproject.toml" ] || [ -f "requirements.txt" ]; then
+            echo "type=python" >> $GITHUB_OUTPUT
+          else
+            echo "type=unknown" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Node.js dependency audit
+        if: steps.detect.outputs.type == 'node'
+        run: |
+          npm audit --audit-level=high --json > audit-report.json || true
+          HIGH=$(cat audit-report.json | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('metadata',{}).get('vulnerabilities',{}).get('high',0))" 2>/dev/null || echo "0")
+          CRITICAL=$(cat audit-report.json | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('metadata',{}).get('vulnerabilities',{}).get('critical',0))" 2>/dev/null || echo "0")
+          echo "Critical: $CRITICAL | High: $HIGH"
+          if [ "$CRITICAL" -gt 0 ]; then
+            echo "❌ CRITICAL vulnerabilities found in dependencies. Fix before merging."
+            npm audit --audit-level=critical
+            exit 1
+          elif [ "$HIGH" -gt 0 ]; then
+            echo "⚠ HIGH vulnerabilities found. Review before merging."
+            npm audit --audit-level=high
+          else
+            echo "✓ No high/critical dependency vulnerabilities"
+          fi
+
+      - name: Python dependency audit
+        if: steps.detect.outputs.type == 'python'
+        run: |
+          pip install pip-audit --quiet 2>/dev/null || true
+          pip-audit --format=json > audit-report.json 2>/dev/null || true
+          if [ -f "audit-report.json" ]; then
+            VULN_COUNT=$(python3 -c "import json; d=json.load(open('audit-report.json')); print(len([v for p in d.get('dependencies',[]) for v in p.get('vulns',[])]))" 2>/dev/null || echo "0")
+            echo "Vulnerabilities found: $VULN_COUNT"
+            if [ "$VULN_COUNT" -gt 0 ]; then
+              echo "⚠ Dependency vulnerabilities found. Review audit-report.json"
+            else
+              echo "✓ No dependency vulnerabilities detected"
+            fi
+          fi
+
+  secret-scan:
+    name: Secret Detection
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Scan for secrets
+        run: |
+          # Check for common secret patterns in changed files
+          # This is a basic check — use Gitleaks or TruffleHog for production
+
+          FAILED=0
+
+          # Check for .env files committed accidentally
+          if git ls-files | grep -E "^\.env$"; then
+            echo "❌ .env file is tracked by git. Add to .gitignore immediately."
+            FAILED=1
+          fi
+
+          # Check for common secret patterns
+          SECRET_PATTERNS=(
+            "sk-[a-zA-Z0-9]{32,}"          # OpenAI / Anthropic keys
+            "AIza[0-9A-Za-z_-]{35}"        # Google API keys
+            "AKIA[0-9A-Z]{16}"             # AWS Access Keys
+            "ghp_[a-zA-Z0-9]{36}"          # GitHub tokens
+            "xoxb-[0-9]+-[a-zA-Z0-9]+"    # Slack bot tokens
+          )
+
+          for pattern in "${SECRET_PATTERNS[@]}"; do
+            MATCHES=$(git diff HEAD~1..HEAD 2>/dev/null | grep "^+" | grep -E "$pattern" | grep -v "^+++" || true)
+            if [ -n "$MATCHES" ]; then
+              echo "❌ Potential secret pattern found: $pattern"
+              FAILED=1
+            fi
+          done
+
+          if [ "$FAILED" -eq 0 ]; then
+            echo "✓ No obvious secrets detected"
+          else
+            echo ""
+            echo "If these are false positives, add them to .gitignore or use a secrets manager."
+            exit 1
+          fi
+
+  # Uncomment to enable AI security review (requires ANTHROPIC_API_KEY secret)
+  # ai-security-review:
+  #   name: Claude Security Audit
+  #   runs-on: ubuntu-latest
+  #   if: github.event_name == 'pull_request'
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: anthropics/claude-code-action@v1
+  #       with:
+  #         anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+  #         prompt: |
+  #           You are the NEXUS Security Agent (see .nexus/agents/shared-security.md).
+  #           Run the OWASP Top 10 checklist on the changed files in this PR.
+  #           For each finding: severity, location, exploitation scenario, remediation.
+  #           If any CRITICAL or HIGH findings: mark the PR as requesting changes.
+  #           Write findings to .nexus/outbox/reports/ and post a summary comment.
+  #         claude_args: "--max-turns 5"
