@@ -34,6 +34,21 @@ export type VaultDocumentState = {
 export type QueueState = {
   inboxCounts: Record<string, number>;
   outboxCounts: Record<string, number>;
+  recentSessions: {
+    sessionId: string;
+    updatedAt: string;
+    turnCount: number;
+    lastRequest: string | null;
+  }[];
+  recentExecutions: {
+    executionId: string;
+    provider: string;
+    room: string;
+    status: ExecutionStatus;
+    createdAt: string;
+    outputPath: string | null;
+    sessionId: string | null;
+  }[];
 };
 
 export type RoomDetailState = {
@@ -64,6 +79,7 @@ export type ExecutionStatus = "planned" | "running" | "completed" | "failed" | "
 export type ExecutionRecord = {
   executionId: string;
   sessionId: string | null;
+  turnId: string | null;
   provider: string;
   room: string;
   intent: string;
@@ -75,4 +91,25 @@ export type ExecutionRecord = {
   outputPath: string | null;
   errorMessage: string | null;
   retryCount: number;
+};
+
+export type CommandSessionTurn = {
+  turnId: string;
+  createdAt: string;
+  request: string;
+  source: string;
+  intent: string;
+  summary: string;
+  recommendedRoom: string;
+  recommendedAi: string;
+  executionId: string | null;
+  executionStatus: ExecutionStatus | null;
+};
+
+export type CommandSessionRecord = {
+  sessionId: string;
+  createdAt: string;
+  updatedAt: string;
+  lastRequest: string | null;
+  turns: CommandSessionTurn[];
 };

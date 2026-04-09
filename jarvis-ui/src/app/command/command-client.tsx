@@ -4,13 +4,17 @@ import Link from "next/link";
 import type { Route } from "next";
 import { startTransition, useEffect, useState } from "react";
 
-import type { ExecutionRecord } from "@/modules/nexus-adapter/types";
+import type {
+  CommandSessionRecord,
+  ExecutionRecord
+} from "@/modules/nexus-adapter/types";
 import type { CommandPlan, CommandSource, LaunchPackage } from "@/modules/command/types";
 
 async function fetchCommandPlan(input: {
   request: string;
   source: CommandSource;
-}): Promise<CommandPlan> {
+  sessionId?: string | null;
+}): Promise<{ sessionId: string; turnId: string; plan: CommandPlan }> {
   const response = await fetch("/api/command/plan", {
     method: "POST",
     headers: {
@@ -31,6 +35,8 @@ async function executeLaunchPackage(input: {
   room: string;
   intent: string;
   prompt: string;
+  sessionId?: string | null;
+  turnId?: string | null;
 }): Promise<{ executionId: string; status: string }> {
   const response = await fetch("/api/command/execute", {
     method: "POST",
@@ -59,6 +65,18 @@ async function fetchExecutionRecord(executionId: string): Promise<ExecutionRecor
   return response.json();
 }
 
+async function fetchCommandSession(sessionId: string): Promise<CommandSessionRecord> {
+  const response = await fetch(`/api/command/session/${sessionId}`, {
+    cache: "no-store"
+  });
+
+  if (!response.ok) {
+    throw new Error("Failed to read Jarvis session.");
+  }
+
+  return response.json();
+}
+
 function Section({
   title,
   items
@@ -71,6 +89,32 @@ function Section({
       <h2>{title}</h2>
       <ul className="list">
         {items.length > 0 ? items.map((item) => <li key={item}>{item}</li>) : <li>Nothing surfaced yet.</li>}
+      </ul>
+    </section>
+  );
+}
+
+function SessionPanel({
+  session
+}: {
+  session: CommandSessionRecord;
+}) {
+  return (
+    <section className="panel command-panel">
+      <h2>Jarvis session</h2>
+      <p className="meta">Session: {session.sessionId}</p>
+      <p className="meta">Updated: {new Date(session.updatedAt).toLocaleString()}</p>
+      <ul className="list">
+        {session.turns.length > 0 ? (
+          [...session.turns].reverse().map((turn) => (
+            <li key={turn.turnId}>
+              <strong>{turn.recommendedRoom}</strong> via {turn.recommendedAi}: {turn.request}
+              {turn.executionStatus ? ` [${turn.executionStatus}]` : ""}
+            </li>
+          ))
+        ) : (
+          <li>No turns yet.</li>
+        )}
       </ul>
     </section>
   );
@@ -147,27 +191,38 @@ const QUICK_PROMPTS = [
 
 export function CommandClient({
   initialRequest,
-  initialSource
+  initialSource,
+  initialSessionId
 }: {
   initialRequest: string;
   initialSource: CommandSource;
+  initialSessionId: string | null;
 }) {
   const [request, setRequest] = useState(initialRequest);
   const [source, setSource] = useState<CommandSource>(initialSource);
   const [plan, setPlan] = useState<CommandPlan | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(initialSessionId);
+  const [turnId, setTurnId] = useState<string | null>(null);
+  const [sessionRecord, setSessionRecord] = useState<CommandSessionRecord | null>(null);
   const [executionId, setExecutionId] = useState<string | null>(null);
   const [executionRecord, setExecutionRecord] = useState<ExecutionRecord | null>(null);
-  const [executing, setExecuting] = useState(false);
+  const [executingProvider, setExecutingProvider] = useState<string | null>(null);
 
   const runPlan = (nextRequest: string, nextSource: CommandSource) => {
     setLoading(true);
     setError(null);
 
     startTransition(() => {
-      fetchCommandPlan({ request: nextRequest, source: nextSource })
-        .then(setPlan)
+      fetchCommandPlan({ request: nextRequest, source: nextSource, sessionId })
+        .then(async (result) => {
+          setPlan(result.plan);
+          setSessionId(result.sessionId);
+          setTurnId(result.turnId);
+          const nextSession = await fetchCommandSession(result.sessionId);
+          setSessionRecord(nextSession);
+        })
         .catch((planError) => {
           setError(planError instanceof Error ? planError.message : "Unknown command error.");
         })
@@ -176,10 +231,39 @@ export function CommandClient({
   };
 
   useEffect(() => {
+    if (!initialSessionId) {
+      return;
+    }
+
+    fetchCommandSession(initialSessionId)
+      .then((session) => {
+        setSessionRecord(session);
+        const latestTurn = session.turns.at(-1);
+
+        if (latestTurn) {
+          setRequest(latestTurn.request);
+        }
+      })
+      .catch(() => {
+        // If restore fails, keep the page usable rather than blocking.
+      });
+  }, [initialSessionId]);
+
+  useEffect(() => {
     if (initialRequest.trim() || initialSource === "brownfield") {
       runPlan(initialRequest, initialSource);
     }
   }, [initialRequest, initialSource]);
+
+  useEffect(() => {
+    if (!sessionId || typeof window === "undefined") {
+      return;
+    }
+
+    const url = new URL(window.location.href);
+    url.searchParams.set("sessionId", sessionId);
+    window.history.replaceState({}, "", url.toString());
+  }, [sessionId]);
 
   useEffect(() => {
     if (!executionId) {
@@ -188,15 +272,20 @@ export function CommandClient({
 
     const intervalId = window.setInterval(() => {
       fetchExecutionRecord(executionId)
-        .then((record) => {
+        .then(async (record) => {
           setExecutionRecord(record);
+
+          if (record.sessionId) {
+            const nextSession = await fetchCommandSession(record.sessionId);
+            setSessionRecord(nextSession);
+          }
 
           if (
             record.status === "completed" ||
             record.status === "failed" ||
             record.status === "blocked"
           ) {
-            setExecuting(false);
+            setExecutingProvider(null);
             window.clearInterval(intervalId);
           }
         })
@@ -206,7 +295,7 @@ export function CommandClient({
               ? executionError.message
               : "Unknown execution status error."
           );
-          setExecuting(false);
+          setExecutingProvider(null);
           window.clearInterval(intervalId);
         });
     }, 1500);
@@ -219,7 +308,7 @@ export function CommandClient({
       return;
     }
 
-    setExecuting(true);
+    setExecutingProvider(launchPackage.ai.toLowerCase());
     setExecutionRecord(null);
     setError(null);
 
@@ -227,7 +316,9 @@ export function CommandClient({
       provider: launchPackage.ai.toLowerCase(),
       room: launchPackage.room,
       intent: plan.classification.intent,
-      prompt: launchPackage.prompt
+      prompt: launchPackage.prompt,
+      sessionId,
+      turnId
     })
       .then((result) => {
         setExecutionId(result.executionId);
@@ -238,7 +329,7 @@ export function CommandClient({
             ? executionError.message
             : "Unknown execution error."
         );
-        setExecuting(false);
+        setExecutingProvider(null);
       });
   };
 
@@ -310,8 +401,11 @@ export function CommandClient({
           ))}
         </div>
 
+        {sessionId ? <p className="meta">Active session: {sessionId}</p> : null}
         {error ? <p className="error-text">{error}</p> : null}
       </section>
+
+      {sessionRecord ? <SessionPanel session={sessionRecord} /> : null}
 
       {plan ? (
         <>
@@ -342,7 +436,7 @@ export function CommandClient({
                   ? executionRecord
                   : null
               }
-              executing={executing && executionRecord?.provider === launchPackage.ai.toLowerCase()}
+              executing={executingProvider === launchPackage.ai.toLowerCase()}
               onExecute={handleExecute}
             />
           ))}

@@ -19,6 +19,7 @@ export async function POST(request: Request) {
     intent?: string;
     prompt?: string;
     sessionId?: string | null;
+    turnId?: string | null;
   };
 
   const provider = body.provider?.trim();
@@ -39,6 +40,7 @@ export async function POST(request: Request) {
   const record: ExecutionRecord = {
     executionId,
     sessionId: body.sessionId ?? null,
+    turnId: body.turnId ?? null,
     provider,
     room,
     intent,

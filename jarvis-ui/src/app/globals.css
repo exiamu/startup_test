@@ -147,6 +147,25 @@ li {
   resize: vertical;
 }
 
+.jarvis-input {
+  min-height: 180px;
+}
+
+.jarvis-panel {
+  min-height: 100%;
+}
+
+.jarvis-copy {
+  margin-bottom: 8px;
+}
+
+.jarvis-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
 .actions {
   margin-top: 14px;
 }

@@ -88,6 +88,13 @@ export function StartExperience() {
               </section>
             ) : null}
             <div className="choice-grid choice-grid-activated">
+              <Link className="choice-card" href={"/jarvis" as Route}>
+                <strong>Jarvis</strong>
+                <span>
+                  Talk to Jarvis directly and keep a live session moving without dropping into
+                  the full technical command surface first.
+                </span>
+              </Link>
               <Link className="choice-card" href={"/command" as Route}>
                 <strong>Command</strong>
                 <span>

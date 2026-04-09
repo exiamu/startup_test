@@ -5,6 +5,8 @@ import type {
   ArtifactDirectoryState,
   ArtifactNode,
   ArtifactFileState,
+  CommandSessionRecord,
+  ExecutionRecord,
   NexusHealth,
   OverviewState,
   QueueState,
@@ -91,6 +93,34 @@ async function readLinesIfPresent(relativePath: string): Promise<string[]> {
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean);
+}
+
+async function readJsonIfPresent<T>(relativePath: string): Promise<T | null> {
+  const filePath = resolveInsideNexus(relativePath);
+
+  if (!(await fileExists(filePath))) {
+    return null;
+  }
+
+  try {
+    const content = await fs.readFile(filePath, "utf8");
+    return JSON.parse(content) as T;
+  } catch {
+    return null;
+  }
+}
+
+async function listJsonFiles(relativePath: string): Promise<string[]> {
+  const dirPath = resolveInsideNexus(relativePath);
+
+  try {
+    const entries = await fs.readdir(dirPath, { withFileTypes: true });
+    return entries
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+      .map((entry) => entry.name);
+  } catch {
+    return [];
+  }
 }
 
 export async function readNexusHealth(): Promise<NexusHealth> {
@@ -195,9 +225,50 @@ export async function readQueueState(): Promise<QueueState> {
     )
   );
 
+  const [sessionFiles, executionFiles] = await Promise.all([
+    listJsonFiles("sessions"),
+    listJsonFiles("execution")
+  ]);
+
+  const [sessions, executions] = await Promise.all([
+    Promise.all(
+      sessionFiles.map((file) =>
+        readJsonIfPresent<CommandSessionRecord>(`sessions/${file}`)
+      )
+    ),
+    Promise.all(
+      executionFiles.map((file) =>
+        readJsonIfPresent<ExecutionRecord>(`execution/${file}`)
+      )
+    )
+  ]);
+
   return {
     inboxCounts,
-    outboxCounts
+    outboxCounts,
+    recentSessions: sessions
+      .filter((session): session is CommandSessionRecord => Boolean(session))
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .slice(0, 8)
+      .map((session) => ({
+        sessionId: session.sessionId,
+        updatedAt: session.updatedAt,
+        turnCount: session.turns.length,
+        lastRequest: session.lastRequest
+      })),
+    recentExecutions: executions
+      .filter((execution): execution is ExecutionRecord => Boolean(execution))
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+      .slice(0, 8)
+      .map((execution) => ({
+        executionId: execution.executionId,
+        provider: execution.provider,
+        room: execution.room,
+        status: execution.status,
+        createdAt: execution.createdAt,
+        outputPath: execution.outputPath,
+        sessionId: execution.sessionId
+      }))
   };
 }
 

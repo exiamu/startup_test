@@ -22,6 +22,7 @@ export function NavShell() {
     <nav className="nav">
       <Link href={"/" as Route}>Home</Link>
       <Link href={"/start" as Route}>Start</Link>
+      <Link href={"/jarvis" as Route}>Jarvis</Link>
       <Link href={"/command" as Route}>Command</Link>
       <Link href={"/command/validation" as Route}>Validation</Link>
       <Link href={"/overview" as Route}>Overview</Link>

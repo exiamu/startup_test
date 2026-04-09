@@ -7,10 +7,10 @@
 ```
 Project:      startup_test
 Phase:        Runtime Build — 7-Day Execution Plan Active
-Next Action:  Run one manual local-machine browser test of `/command` execution and capture any live runtime failures outside the sandbox.
+Next Action:  Run one manual local-machine browser test of `/jarvis` plus `/command` execution/session restore and capture any live runtime failures outside the sandbox.
 Blocker:      Sandbox here blocks local port binding, so final browser-driven runtime verification must happen on a normal machine.
-Last Session: 2026-04-09 | Codex | Ran the drop-in empty-project test through copy + init + health-check + build in a clean repo.
-Tests:        `jarvis-ui` build/typecheck pass; provider smoke tests pass; execution routes verified; clean drop-in repo passes init/health-check/build; live port bind blocked in sandbox.
+Last Session: 2026-04-09 | Codex | Added the first direct `/jarvis` commander-facing surface on top of the runtime/session layer.
+Tests:        `jarvis-ui` build/typecheck pass; provider smoke tests pass; execution routes verified; command-session restore, runtime visibility, and `/jarvis` build clean; live port bind blocked in sandbox.
 Build:        `jarvis-ui` production build is clean and stable.
 ```
 
@@ -23,6 +23,10 @@ Build:        `jarvis-ui` production build is clean and stable.
 - The copied repo passed `init.sh`, `health-check.sh`, and `jarvis-ui` production build.
 - `start-jarvis.sh` reached the `next dev` launch step and then failed only because this sandbox blocks port binding on `localhost:3000`.
 - No code defects were exposed by the drop-in test path inside this environment.
+- `/command` now creates lightweight session records in `.nexus/sessions/` and can restore them from `sessionId`.
+- Execution records now link back to command-session turns so the runtime has a minimal continuity layer.
+- `/queue` now exposes recent sessions and executions as a lightweight runtime operations surface.
+- `/jarvis` now exists as the direct commander-facing entrypoint, with `/command` kept as the more technical operating view.
 
 ## Exact Resume Point
 Next pass is a **manual live runtime check** on a normal local machine:
@@ -30,11 +34,16 @@ Next pass is a **manual live runtime check** on a normal local machine:
     - `production/STATUS.md`
     - `production/plans/runtime_build_plan.md`
     - `production/outbox/reports/2026-04-09-codex-drop-in-empty-project-test.md`
+    - `production/outbox/reports/2026-04-09-codex-command-session-runtime-slice-04.md`
+    - `production/outbox/reports/2026-04-09-codex-runtime-visibility-slice-05.md`
+    - `production/outbox/reports/2026-04-09-codex-direct-jarvis-surface-slice-06.md`
 2.  On a normal machine, create a minimal repo containing only `.nexus/` and `jarvis-ui/`.
 3.  Run `bash .nexus/scripts/init.sh`.
 4.  Run `bash .nexus/scripts/start-jarvis.sh`.
-5.  Open `/command`, generate a plan, click `Execute`, and confirm execution records and output artifacts are written under `.nexus/execution/`.
-6.  Record any live failures as the next bounded implementation slice instead of widening scope.
+5.  Open `/jarvis`, ask Jarvis for a next move, and confirm the session is created and visible.
+6.  Execute the latest move, then confirm execution records and output artifacts are written under `.nexus/execution/`.
+7.  Open `/command?sessionId=...` and confirm the technical view restores the same session from `.nexus/sessions/`.
+8.  Record any live failures as the next bounded implementation slice instead of widening scope.
 
 ## Active Files For Claude
 - `production/README.md`
@@ -63,6 +72,9 @@ Next pass is a **manual live runtime check** on a normal local machine:
 | production/outbox/reports/2026-04-09-codex-backend-execution-runtime-slice-02.md | active | Codex implementation report for completed execution runtime slice 02 |
 | production/outbox/reports/2026-04-09-codex-frontend-command-execution-slice-03.md | active | Codex implementation report for completed frontend execution runtime slice 03 |
 | production/outbox/reports/2026-04-09-codex-drop-in-empty-project-test.md | active | Drop-in empty-project test result from a clean copied repo |
+| production/outbox/reports/2026-04-09-codex-command-session-runtime-slice-04.md | active | Codex implementation report for lightweight command-session persistence |
+| production/outbox/reports/2026-04-09-codex-runtime-visibility-slice-05.md | active | Codex implementation report for lightweight runtime visibility in `/queue` |
+| production/outbox/reports/2026-04-09-codex-direct-jarvis-surface-slice-06.md | active | Codex implementation report for the first direct `/jarvis` surface |
 | production/vault/FOUNDING_PROMPT.md | active | Immutable origin for the Jarvis system itself |
 | production/vault/ARCHITECTURE.md | active | Current architecture truth, including the missing runtime layer |
 | production/vault/VISION.md | active | Product vision for the Jarvis system in this repository |
@@ -93,11 +105,11 @@ Next pass is a **manual live runtime check** on a normal local machine:
 ## Known Issues
 | ID | Description | Status | Room |
 |----|-------------|--------|------|
-| RUNTIME-001 | Jarvis now executes through `/command`, but it still lacks session persistence, fallback policy, and true autonomous continuation | Open | architect |
+| RUNTIME-001 | Jarvis now has a direct `/jarvis` surface plus session persistence, but it still lacks fallback policy, richer memory, and true autonomous continuation | Open | architect |
 | TEST-001 | Clean drop-in repo passes init/health-check/build, but live browser verification still needs a normal machine because the sandbox blocks port binding | Open | architect/frontend |
 
 ## Next Session Recommended AI
-**Codex** — fix only whatever a real local-machine `/command` execution test exposes
+**Codex** — fix only whatever a real local-machine `/jarvis` and `/command` runtime test exposes
 
 ---
 <!-- Template for future session updates: -->
