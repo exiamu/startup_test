@@ -19,11 +19,10 @@ Today the system is strongest as:
 It is not yet a full Jarvis runtime.
 
 What is still missing before it behaves like a true Jarvis-style operator:
-- direct provider execution for Claude, Codex, and Gemini
-- configurable bash/python launch commands per provider
 - provider fallback and token-budget-aware switching
-- persistent execution state and logs
-- a first-class always-available "talk to Jarvis" mode beyond startup alignment flows
+- persistent session memory and a first-class always-available "talk to Jarvis" mode
+- deeper runtime visibility and inspection beyond the current minimal execution surface
+- broader real-world validation in normal local-machine environments
 
 ## Repository Layout
 
@@ -68,6 +67,29 @@ Jarvis now has three practical entry styles:
 These are not equal in product importance:
 - `Command` is the long-term default working surface
 - `New` and `Existing` are startup alignment flows that help Jarvis fit itself into the project
+
+## Portable Startup
+
+## Clone And Start
+
+If you are pulling this from GitHub into an empty or existing project folder, clone the repo contents first:
+
+```bash
+git clone git@github.com:exiamu/startup_test.git .
+```
+
+Then start Jarvis from the project root:
+
+```bash
+bash .nexus/scripts/init.sh
+bash .nexus/scripts/start-jarvis.sh
+```
+
+If SSH is not configured on your machine, use HTTPS instead:
+
+```bash
+git clone https://github.com/exiamu/startup_test.git .
+```
 
 ## Portable Startup
 
@@ -135,10 +157,11 @@ Right now:
 - startup flow works
 - the activation screen works
 - `/command` exists as the first real operating surface
-- `/command` can recommend room + AI + why, and assemble copy-ready launch packages
+- `/command` can recommend room + AI + why, assemble launch packages, and trigger async provider execution
 - blank-project onboarding exists and is adaptive
 - existing-project startup performs a deeper learning pass than a top-level scan
 - portable copied installs now re-align identity and reset stale copied session state
+- execution records and runtime output can persist under `.nexus/execution/`
 - launcher dependency handling is improved, but full online install behavior still needs normal-environment testing
 - the active next phase is turning Jarvis from recommendation-only routing into an execution-capable multi-AI runtime
 
@@ -177,8 +200,8 @@ Historical but still useful:
 - brownfield learning still needs more validation against mature repos
 - `/command` baseline validation is green, but routing and launch package quality still need broader validation against messy prompts and repo shapes
 - the earlier Turbopack tracing warning is not currently reproducing, but the local-first filesystem approach still needs broader environment validation
-- provider execution does not exist yet, so Jarvis still stops at recommendation/packaging instead of running work itself
-- `npm run lint` is currently broken under the installed Next.js version and needs to be fixed as part of workspace hardening
+- provider execution exists, but fallback policy, token-awareness, and richer runtime control are not built yet
+- live browser-driven runtime testing still needs to happen on a normal machine because this sandbox blocks port binding
 
 ## Working Principle
 
