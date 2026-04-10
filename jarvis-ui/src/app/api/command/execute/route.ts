@@ -6,6 +6,8 @@ import { NextResponse } from "next/server";
 
 import { resolveInsideNexus } from "@/lib/nexus-path";
 import {
+  attachTaskToCommandSessionTurn,
+  createTaskRecord,
   ensureDirectory,
   updateExecutionStatus,
   writeExecutionRecord
@@ -20,6 +22,8 @@ export async function POST(request: Request) {
     prompt?: string;
     sessionId?: string | null;
     turnId?: string | null;
+    request?: string;
+    taskId?: string | null;
   };
 
   const provider = body.provider?.trim();
@@ -36,11 +40,34 @@ export async function POST(request: Request) {
 
   const executionId = `${provider}-${Date.now()}-${randomBytes(2).toString("hex")}`;
   const createdAt = new Date().toISOString();
+  let taskId = body.taskId ?? null;
+
+  if (!taskId) {
+    const task = await createTaskRecord({
+      sessionId: body.sessionId ?? null,
+      turnId: body.turnId ?? null,
+      title: body.request?.trim() || `${intent} via ${room}`,
+      request: body.request?.trim() || prompt,
+      room,
+      provider,
+      intent
+    });
+    taskId = task.taskId;
+
+    if (body.sessionId && body.turnId) {
+      await attachTaskToCommandSessionTurn({
+        sessionId: body.sessionId,
+        turnId: body.turnId,
+        taskId
+      });
+    }
+  }
 
   const record: ExecutionRecord = {
     executionId,
     sessionId: body.sessionId ?? null,
     turnId: body.turnId ?? null,
+    taskId,
     provider,
     room,
     intent,

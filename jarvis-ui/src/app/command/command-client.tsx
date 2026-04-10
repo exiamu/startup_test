@@ -34,6 +34,7 @@ async function executeLaunchPackage(input: {
   provider: string;
   room: string;
   intent: string;
+  request?: string;
   prompt: string;
   sessionId?: string | null;
   turnId?: string | null;
@@ -316,6 +317,7 @@ export function CommandClient({
       provider: launchPackage.ai.toLowerCase(),
       room: launchPackage.room,
       intent: plan.classification.intent,
+      request,
       prompt: launchPackage.prompt,
       sessionId,
       turnId
@@ -420,6 +422,13 @@ export function CommandClient({
               <li>Contract basis: {plan.recommendation.contractBasis}</li>
             </ul>
           </section>
+
+          <Section title="Mission continuity" items={[
+            `Session: ${plan.runtimeContext.sessionId ?? "new session"}`,
+            `Latest execution: ${plan.runtimeContext.latestExecutionStatus ?? "no execution yet"}`,
+            ...plan.runtimeContext.activeTasks,
+            ...plan.runtimeContext.recentTurns
+          ]} />
 
           <Section title="Project state signals" items={plan.projectState.projectSignals} />
           <Section title="Current handoff state" items={plan.projectState.handoffSummary} />

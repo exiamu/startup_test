@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 
 import { resolveInsideNexus, resolveNexusRoot } from "@/lib/nexus-path";
 import { readOverviewState } from "@/modules/nexus-adapter/reader";
+import { readCommandSession, readTaskRecord } from "@/modules/nexus-adapter/writer";
 import { analyzeOnboardingInput } from "@/modules/onboarding/engine";
 import type { OnboardingAnalysis } from "@/modules/onboarding/types";
 import { scanProjectRoot } from "@/modules/project-discovery/reader";
@@ -524,11 +525,17 @@ function buildTaskContext(
   source: CommandSource,
   request: string,
   onboarding: OnboardingAnalysis | null,
-  scan: ProjectScan
+  scan: ProjectScan,
+  runtimeContext: {
+    activeTasks: string[];
+    recentTurns: string[];
+    latestExecutionStatus: string | null;
+  }
 ): string[] {
   if (source === "onboarding" && onboarding) {
     return dedupe(
       [
+        ...runtimeContext.activeTasks,
         ...onboarding.commanderModel.firstExecutionSlice,
         ...onboarding.commanderModel.blockingDecisions,
         ...onboarding.draftPreview.nextActions
@@ -540,6 +547,7 @@ function buildTaskContext(
   if (source === "brownfield") {
     return dedupe(
       [
+        ...runtimeContext.activeTasks,
         ...scan.architectureSignals,
         ...scan.unresolvedQuestions,
         ...scan.recommendedActions.map((action) => `${action.title}: ${action.reason}`)
@@ -551,6 +559,11 @@ function buildTaskContext(
   return dedupe(
     [
       request ? `Commander request: ${request.trim()}` : "",
+      ...runtimeContext.activeTasks,
+      ...runtimeContext.recentTurns,
+      runtimeContext.latestExecutionStatus
+        ? `Latest execution status: ${runtimeContext.latestExecutionStatus}`
+        : "",
       scan.architectureSignals[0] ?? "",
       scan.recommendedActions[0]
         ? `Current best repo move: ${scan.recommendedActions[0].title}`
@@ -558,6 +571,60 @@ function buildTaskContext(
     ],
     5
   );
+}
+
+async function buildRuntimeContext(sessionId?: string | null): Promise<{
+  sessionId: string | null;
+  activeTasks: string[];
+  recentTurns: string[];
+  latestExecutionStatus: string | null;
+}> {
+  if (!sessionId) {
+    return {
+      sessionId: null,
+      activeTasks: [],
+      recentTurns: [],
+      latestExecutionStatus: null
+    };
+  }
+
+  const session = await readCommandSession(sessionId);
+
+  if (!session) {
+    return {
+      sessionId,
+      activeTasks: [],
+      recentTurns: [],
+      latestExecutionStatus: null
+    };
+  }
+
+  const recentTurns = session.turns
+    .slice(-3)
+    .map((turn) => `${turn.recommendedRoom}/${turn.recommendedAi}: ${turn.request}`);
+
+  const taskIds = session.turns
+    .map((turn) => turn.taskId)
+    .filter((taskId): taskId is string => Boolean(taskId));
+
+  const tasks = (
+    await Promise.all(taskIds.map((taskId) => readTaskRecord(taskId)))
+  ).filter((task): task is NonNullable<Awaited<ReturnType<typeof readTaskRecord>>> => Boolean(task));
+
+  const activeTasks = tasks
+    .filter((task) => task.status !== "completed" && task.status !== "failed")
+    .slice(-3)
+    .map((task) => `${task.title} [${task.status}] via ${task.room}/${task.provider}`);
+
+  const latestExecutionStatus =
+    [...session.turns].reverse().find((turn) => turn.executionStatus)?.executionStatus ?? null;
+
+  return {
+    sessionId: session.sessionId,
+    activeTasks,
+    recentTurns,
+    latestExecutionStatus
+  };
 }
 
 function packageFit(
@@ -730,13 +797,15 @@ function buildNextMoves(
 export async function buildCommandPlan(input: {
   request?: string;
   source?: CommandSource;
+  sessionId?: string | null;
 }): Promise<CommandPlan> {
   const request = input.request?.trim() ?? "";
   const source = input.source ?? "direct";
-  const [contract, overview, scan] = await Promise.all([
+  const [contract, overview, scan, runtimeContext] = await Promise.all([
     readRoomAiContract(),
     readOverviewState(),
-    scanProjectRoot()
+    scanProjectRoot(),
+    buildRuntimeContext(input.sessionId)
   ]);
 
   const onboarding =
@@ -750,7 +819,7 @@ export async function buildCommandPlan(input: {
     onboarding,
     scan
   );
-  const taskContext = buildTaskContext(source, request, onboarding, scan);
+  const taskContext = buildTaskContext(source, request, onboarding, scan, runtimeContext);
   const [roomContext, repoTruth] = await Promise.all([
     readRoomContextBundle(recommendation.room),
     readRepoTruthSummary()
@@ -761,6 +830,7 @@ export async function buildCommandPlan(input: {
     request,
     classification,
     recommendation,
+    runtimeContext,
     projectState: {
       handoffSummary: overview.handoffSummary,
       projectSignals: buildProjectSignals(scan),

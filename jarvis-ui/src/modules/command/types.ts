@@ -46,6 +46,12 @@ export type CommandPlan = {
   request: string;
   classification: CommandClassification;
   recommendation: CommandRecommendation;
+  runtimeContext: {
+    sessionId: string | null;
+    activeTasks: string[];
+    recentTurns: string[];
+    latestExecutionStatus: string | null;
+  };
   projectState: {
     handoffSummary: string[];
     projectSignals: string[];

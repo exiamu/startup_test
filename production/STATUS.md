@@ -20,6 +20,8 @@
 - `/command` now persists a command session in `.nexus/sessions/` and can restore that session from `sessionId`
 - `/queue` now exposes recent Jarvis sessions and recent executions as a lightweight runtime operations view
 - `/jarvis` now exists as the first direct commander-facing Jarvis surface over the same runtime/session plumbing
+- task records now persist in `.nexus/tasks/` so Jarvis work has a durable unit beyond chat turns and execution files
+- command planning now reads active session/task state so Jarvis can respond with mission continuity instead of only the latest prompt
 - onboarding and brownfield startup now hand off into `/command` instead of stopping at isolated analysis screens
 - startup now exposes `Command` as a first-class path alongside `New` and `Existing`
 - all room `CONTEXT.md` files now carry repo-aligned state instead of mixed init-era placeholders
@@ -41,6 +43,8 @@
 - the system is now partway into runtime territory: `/command` can plan, execute, and persist a lightweight session, but it is not yet a full Jarvis-style operator
 - `jarvis-ui` can now recommend a room, invoke a provider, persist execution state, and retain lightweight session history
 - `jarvis-ui` now also has a direct `/jarvis` conversational surface, but it still routes through the same planning engine rather than a richer autonomous operator loop
+- the runtime now has the beginnings of a true work backbone: sessions, tasks, and executions are linked, but Jarvis still does not reason over that graph autonomously
+- the planning layer is now session-aware, but it still only uses lightweight continuity signals rather than performing deeper autonomous task management
 - there is still no provider fallback, token-budget awareness, or autonomous rerouting/result-ingestion loop
 - direct conversation with Jarvis still routes through `/command` planning rather than a richer always-on commander runtime with memory and authority
 - startup `New` and `Existing` paths are useful for first-fit project alignment, but they are only part of the system; Jarvis still needs a default day-to-day command and execution mode to feel like one working assistant
@@ -67,6 +71,8 @@
 - runtime slice 04 is complete: `/command` now persists lightweight session history, restores by `sessionId`, and links executions back to session turns
 - runtime slice 05 is complete: `/queue` now shows recent sessions and executions so runtime state is visible without raw file browsing
 - runtime slice 06 is complete: `/jarvis` now provides a direct conversation-style entrypoint for the commander on top of the existing session/runtime layer
+- runtime slice 07 is complete: task records now persist in `.nexus/tasks/` and connect session turns to execution work
+- runtime slice 08 is complete: Jarvis planning now reads session/task/execution continuity and surfaces it in `/jarvis` and `/command`
 
 ## Known Follow-Up
 - automatic install path itself is implemented, but full online registry success cannot be verified in this sandbox
@@ -79,6 +85,8 @@
 - token-usage awareness and provider fallback policy do not exist yet
 - Jarvis cannot yet continue work autonomously after choosing a room and AI
 - a first direct Jarvis chat surface now exists at `/jarvis`, but it is still an early layer over the planning engine rather than a fuller autonomous commander runtime
+- Jarvis still does not synthesize multi-step plans into an active task graph it can continue on its own; the new task ledger is only the first backbone for that
+- Jarvis now sees continuity, but it still does not choose and continue a multi-step mission flow on its own
 - init.sh and health-check.sh now bootstrap and validate the runtime directories and provider-script contract
 - the next unknown is what breaks, if anything, during a real drop-in empty-project test
 - the next unknown is now narrower: whether a normal local machine exposes any live UI/runtime bugs once `/command` is exercised through the browser
@@ -86,6 +94,6 @@
 ## Next Recommended Work
 1. Run one real manual local-machine test of `/jarvis` plus `/command` execution/session restore outside the sandbox and capture any runtime failures
 2. Fix whatever breaks in that live manual test before widening scope again
-3. Deepen `/jarvis` from a conversational surface into a fuller Jarvis runtime with stronger continuity and less visible routing machinery
+3. Deepen `/jarvis` from session-aware planning into a fuller Jarvis runtime that can actively manage multi-step work over sessions, tasks, and executions
 4. Expand runtime visibility from lightweight inspection into a fuller operations surface once live testing confirms the current flow
 5. Add provider fallback and token-usage policy once the single-provider runtime path is proven

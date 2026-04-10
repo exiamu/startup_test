@@ -31,6 +31,30 @@ export default async function QueuePage() {
       </section>
 
       <section className="panel">
+        <h2>Recent tasks</h2>
+        <ul className="list">
+          {queue.recentTasks.length > 0 ? (
+            queue.recentTasks.map((task) => (
+              <li key={task.taskId}>
+                {task.title} · {task.room} / {task.provider} / {task.status}
+                {task.sessionId ? (
+                  <>
+                    {" "}
+                    ·{" "}
+                    <Link href={`/jarvis?sessionId=${task.sessionId}` as Route}>
+                      jarvis
+                    </Link>
+                  </>
+                ) : null}
+              </li>
+            ))
+          ) : (
+            <li>No Jarvis tasks yet.</li>
+          )}
+        </ul>
+      </section>
+
+      <section className="panel">
         <h2>Recent sessions</h2>
         <ul className="list">
           {queue.recentSessions.length > 0 ? (

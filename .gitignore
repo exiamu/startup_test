@@ -1,5 +1,6 @@
 .nexus/execution/
 .nexus/sessions/
+.nexus/tasks/
 .nexus/.codex
 .codex
 jarvis-ui/node_modules/

@@ -7,10 +7,10 @@
 ```
 Project:      startup_test
 Phase:        Runtime Build — 7-Day Execution Plan Active
-Next Action:  Run one manual local-machine browser test of `/jarvis` plus `/command` execution/session restore and capture any live runtime failures outside the sandbox.
+Next Action:  Run one manual local-machine browser test of multi-turn `/jarvis` continuity, `/command`, and the task-ledger flow, then capture any live runtime failures outside the sandbox.
 Blocker:      Sandbox here blocks local port binding, so final browser-driven runtime verification must happen on a normal machine.
-Last Session: 2026-04-09 | Codex | Added the first direct `/jarvis` commander-facing surface on top of the runtime/session layer.
-Tests:        `jarvis-ui` build/typecheck pass; provider smoke tests pass; execution routes verified; command-session restore, runtime visibility, and `/jarvis` build clean; live port bind blocked in sandbox.
+Last Session: 2026-04-10 | Codex | Added session-aware planning so Jarvis reads mission continuity from sessions, tasks, and executions.
+Tests:        `jarvis-ui` build/typecheck pass; provider smoke tests pass; execution routes verified; `/jarvis`, runtime visibility, task-ledger flow, and session-aware planning build clean; live port bind blocked in sandbox.
 Build:        `jarvis-ui` production build is clean and stable.
 ```
 
@@ -27,6 +27,8 @@ Build:        `jarvis-ui` production build is clean and stable.
 - Execution records now link back to command-session turns so the runtime has a minimal continuity layer.
 - `/queue` now exposes recent sessions and executions as a lightweight runtime operations surface.
 - `/jarvis` now exists as the direct commander-facing entrypoint, with `/command` kept as the more technical operating view.
+- task records now persist in `.nexus/tasks/` and are linked to session turns plus execution records.
+- planning now reads active session/task state and surfaces mission continuity in `/jarvis` and `/command`.
 
 ## Exact Resume Point
 Next pass is a **manual live runtime check** on a normal local machine:
@@ -37,13 +39,18 @@ Next pass is a **manual live runtime check** on a normal local machine:
     - `production/outbox/reports/2026-04-09-codex-command-session-runtime-slice-04.md`
     - `production/outbox/reports/2026-04-09-codex-runtime-visibility-slice-05.md`
     - `production/outbox/reports/2026-04-09-codex-direct-jarvis-surface-slice-06.md`
+    - `production/outbox/reports/2026-04-10-codex-task-ledger-slice-07.md`
+    - `production/outbox/reports/2026-04-10-codex-session-aware-planning-slice-08.md`
 2.  On a normal machine, create a minimal repo containing only `.nexus/` and `jarvis-ui/`.
 3.  Run `bash .nexus/scripts/init.sh`.
 4.  Run `bash .nexus/scripts/start-jarvis.sh`.
-5.  Open `/jarvis`, ask Jarvis for a next move, and confirm the session is created and visible.
-6.  Execute the latest move, then confirm execution records and output artifacts are written under `.nexus/execution/`.
-7.  Open `/command?sessionId=...` and confirm the technical view restores the same session from `.nexus/sessions/`.
-8.  Record any live failures as the next bounded implementation slice instead of widening scope.
+5.  Open `/jarvis`, ask Jarvis for a first move, and confirm the session is created and visible.
+6.  Ask a second follow-up question in the same `/jarvis` session and confirm the mission continuity panel reflects the active task/runtime state.
+7.  Execute the latest move, then confirm execution records and output artifacts are written under `.nexus/execution/`.
+8.  Confirm `.nexus/tasks/` now contains a task record linked to the same session and execution.
+9.  Open `/command?sessionId=...` and confirm the technical view restores the same session from `.nexus/sessions/` with continuity signals.
+10. Open `/queue` and confirm the recent task appears.
+11. Record any live failures as the next bounded implementation slice instead of widening scope.
 
 ## Active Files For Claude
 - `production/README.md`
@@ -75,6 +82,8 @@ Next pass is a **manual live runtime check** on a normal local machine:
 | production/outbox/reports/2026-04-09-codex-command-session-runtime-slice-04.md | active | Codex implementation report for lightweight command-session persistence |
 | production/outbox/reports/2026-04-09-codex-runtime-visibility-slice-05.md | active | Codex implementation report for lightweight runtime visibility in `/queue` |
 | production/outbox/reports/2026-04-09-codex-direct-jarvis-surface-slice-06.md | active | Codex implementation report for the first direct `/jarvis` surface |
+| production/outbox/reports/2026-04-10-codex-task-ledger-slice-07.md | active | Codex implementation report for the first durable Jarvis task ledger |
+| production/outbox/reports/2026-04-10-codex-session-aware-planning-slice-08.md | active | Codex implementation report for session-aware Jarvis planning |
 | production/vault/FOUNDING_PROMPT.md | active | Immutable origin for the Jarvis system itself |
 | production/vault/ARCHITECTURE.md | active | Current architecture truth, including the missing runtime layer |
 | production/vault/VISION.md | active | Product vision for the Jarvis system in this repository |
@@ -105,7 +114,7 @@ Next pass is a **manual live runtime check** on a normal local machine:
 ## Known Issues
 | ID | Description | Status | Room |
 |----|-------------|--------|------|
-| RUNTIME-001 | Jarvis now has a direct `/jarvis` surface plus session persistence, but it still lacks fallback policy, richer memory, and true autonomous continuation | Open | architect |
+| RUNTIME-001 | Jarvis now has sessions, tasks, executions, a direct `/jarvis` surface, and session-aware planning, but it still lacks fallback policy, richer memory, and true autonomous continuation | Open | architect |
 | TEST-001 | Clean drop-in repo passes init/health-check/build, but live browser verification still needs a normal machine because the sandbox blocks port binding | Open | architect/frontend |
 
 ## Next Session Recommended AI

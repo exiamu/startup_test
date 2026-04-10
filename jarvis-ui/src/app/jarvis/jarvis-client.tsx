@@ -46,6 +46,7 @@ async function executeLaunchPackage(input: {
   provider: string;
   room: string;
   intent: string;
+  request?: string;
   prompt: string;
   sessionId?: string | null;
   turnId?: string | null;
@@ -216,6 +217,7 @@ export function JarvisClient({
       provider: primaryPackage.ai.toLowerCase(),
       room: primaryPackage.room,
       intent: plan.classification.intent,
+      request: latestTurn?.request ?? plan.request,
       prompt: primaryPackage.prompt,
       sessionId,
       turnId
@@ -297,6 +299,23 @@ export function JarvisClient({
 
       {plan ? (
         <>
+          <section className="panel jarvis-panel">
+            <h2>Mission continuity</h2>
+            <ul className="list">
+              <li>Session: {plan.runtimeContext.sessionId ?? "new session"}</li>
+              <li>
+                Latest execution: {plan.runtimeContext.latestExecutionStatus ?? "no execution yet"}
+              </li>
+            </ul>
+            <ul className="list">
+              {plan.runtimeContext.activeTasks.length > 0 ? (
+                plan.runtimeContext.activeTasks.map((task) => <li key={task}>{task}</li>)
+              ) : (
+                <li>No active tasks surfaced yet.</li>
+              )}
+            </ul>
+          </section>
+
           <section className="panel jarvis-panel">
             <h2>Jarvis response</h2>
             <p className="command-summary">{plan.classification.summary}</p>

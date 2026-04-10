@@ -12,6 +12,7 @@ import type {
   QueueState,
   RoomDetailState,
   RoomState,
+  TaskRecord,
   VaultDocumentState
 } from "@/modules/nexus-adapter/types";
 
@@ -225,12 +226,13 @@ export async function readQueueState(): Promise<QueueState> {
     )
   );
 
-  const [sessionFiles, executionFiles] = await Promise.all([
+  const [sessionFiles, executionFiles, taskFiles] = await Promise.all([
     listJsonFiles("sessions"),
-    listJsonFiles("execution")
+    listJsonFiles("execution"),
+    listJsonFiles("tasks")
   ]);
 
-  const [sessions, executions] = await Promise.all([
+  const [sessions, executions, tasks] = await Promise.all([
     Promise.all(
       sessionFiles.map((file) =>
         readJsonIfPresent<CommandSessionRecord>(`sessions/${file}`)
@@ -240,12 +242,31 @@ export async function readQueueState(): Promise<QueueState> {
       executionFiles.map((file) =>
         readJsonIfPresent<ExecutionRecord>(`execution/${file}`)
       )
+    ),
+    Promise.all(
+      taskFiles.map((file) =>
+        readJsonIfPresent<TaskRecord>(`tasks/${file}`)
+      )
     )
   ]);
 
   return {
     inboxCounts,
     outboxCounts,
+    recentTasks: tasks
+      .filter((task): task is TaskRecord => Boolean(task))
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .slice(0, 8)
+      .map((task) => ({
+        taskId: task.taskId,
+        title: task.title,
+        room: task.room,
+        provider: task.provider,
+        status: task.status,
+        updatedAt: task.updatedAt,
+        sessionId: task.sessionId,
+        executionId: task.executionId
+      })),
     recentSessions: sessions
       .filter((session): session is CommandSessionRecord => Boolean(session))
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))

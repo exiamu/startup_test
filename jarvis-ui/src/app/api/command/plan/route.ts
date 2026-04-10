@@ -13,7 +13,8 @@ export async function POST(request: Request) {
 
   const plan = await buildCommandPlan({
     request: body.request,
-    source: body.source
+    source: body.source,
+    sessionId: body.sessionId
   });
 
   const { session, turn } = await appendCommandSessionTurn({
