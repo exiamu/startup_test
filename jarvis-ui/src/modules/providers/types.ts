@@ -17,3 +17,12 @@ export type ProvidersManifest = {
   fallbackOrder: string[];
   executionLogDir: string;
 };
+
+export type ProviderRuntimeStatus = {
+  name: string;
+  enabled: boolean;
+  ready: boolean;
+  command: string;
+  credentialEnvVar: string;
+  reason: string;
+};

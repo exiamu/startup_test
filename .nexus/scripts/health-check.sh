@@ -182,6 +182,7 @@ check_file "providers.json"
 check_directory "execution"
 check_directory "sessions"
 check_directory "tasks"
+check_directory "mission"
 for script in invoke-claude.sh invoke-codex.sh invoke-gemini.sh test-provider.sh; do
   check_file "scripts/providers/$script"
   if [ -f "$NEXUS_DIR/scripts/providers/$script" ]; then

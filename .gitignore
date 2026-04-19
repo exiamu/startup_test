@@ -1,6 +1,11 @@
-.nexus/execution/
-.nexus/sessions/
-.nexus/tasks/
+.nexus/execution/*
+!.nexus/execution/.gitkeep
+.nexus/sessions/*
+!.nexus/sessions/.gitkeep
+.nexus/tasks/*
+!.nexus/tasks/.gitkeep
+.nexus/mission/*
+!.nexus/mission/.gitkeep
 .nexus/.codex
 .codex
 jarvis-ui/node_modules/

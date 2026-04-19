@@ -5,10 +5,12 @@ import type { Route } from "next";
 import { useEffect, useState } from "react";
 
 import type {
+  ActiveMissionRecord,
   CommandSessionRecord,
   ExecutionRecord
 } from "@/modules/nexus-adapter/types";
 import type { CommandPlan } from "@/modules/command/types";
+import type { ProviderRuntimeStatus } from "@/modules/providers/types";
 
 async function fetchCommandPlan(input: {
   request: string;
@@ -42,6 +44,40 @@ async function fetchCommandSession(sessionId: string): Promise<CommandSessionRec
   return response.json();
 }
 
+async function fetchActiveMission(): Promise<ActiveMissionRecord | null> {
+  const response = await fetch("/api/mission/active", {
+    cache: "no-store"
+  });
+
+  if (response.status === 404) {
+    return null;
+  }
+
+  if (!response.ok) {
+    throw new Error("Failed to read active mission.");
+  }
+
+  return response.json();
+}
+
+async function continueMission(input: {
+  sessionId?: string | null;
+}): Promise<{ sessionId: string; turnId: string; plan: CommandPlan }> {
+  const response = await fetch("/api/command/continue", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(input)
+  });
+
+  if (!response.ok) {
+    throw new Error("Jarvis could not continue the active mission.");
+  }
+
+  return response.json();
+}
+
 async function executeLaunchPackage(input: {
   provider: string;
   room: string;
@@ -50,7 +86,13 @@ async function executeLaunchPackage(input: {
   prompt: string;
   sessionId?: string | null;
   turnId?: string | null;
-}): Promise<{ executionId: string; status: string }> {
+}): Promise<{
+  executionId: string;
+  status: string;
+  providerUsed: string;
+  fallbackFrom: string | null;
+  recoveryNotes?: string[];
+}> {
   const response = await fetch("/api/command/execute", {
     method: "POST",
     headers: {
@@ -78,6 +120,19 @@ async function fetchExecutionRecord(executionId: string): Promise<ExecutionRecor
   return response.json();
 }
 
+async function fetchProviderStatuses(): Promise<ProviderRuntimeStatus[]> {
+  const response = await fetch("/api/providers/status", {
+    cache: "no-store"
+  });
+
+  if (!response.ok) {
+    throw new Error("Failed to read provider readiness.");
+  }
+
+  const body = (await response.json()) as { providers: ProviderRuntimeStatus[] };
+  return body.providers;
+}
+
 const STARTERS = [
   "I have a rough product idea and need Jarvis to shape the first steps.",
   "Read what is here and tell me what should happen next.",
@@ -94,12 +149,24 @@ export function JarvisClient({
   const [sessionId, setSessionId] = useState<string | null>(initialSessionId);
   const [turnId, setTurnId] = useState<string | null>(null);
   const [session, setSession] = useState<CommandSessionRecord | null>(null);
+  const [missionRecord, setMissionRecord] = useState<ActiveMissionRecord | null>(null);
   const [plan, setPlan] = useState<CommandPlan | null>(null);
   const [executionId, setExecutionId] = useState<string | null>(null);
   const [executionRecord, setExecutionRecord] = useState<ExecutionRecord | null>(null);
+  const [providerStatuses, setProviderStatuses] = useState<ProviderRuntimeStatus[]>([]);
+  const [executionMessage, setExecutionMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [executing, setExecuting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchProviderStatuses().then(setProviderStatuses).catch(() => {
+      // Keep Jarvis usable if readiness cannot be read.
+    });
+    fetchActiveMission().then(setMissionRecord).catch(() => {
+      // Keep Jarvis usable if mission state cannot be read.
+    });
+  }, []);
 
   useEffect(() => {
     if (!initialSessionId) {
@@ -107,13 +174,16 @@ export function JarvisClient({
     }
 
     fetchCommandSession(initialSessionId)
-      .then((restored) => {
+      .then(async (restored) => {
         setSession(restored);
         const latestTurn = restored.turns.at(-1);
 
         if (latestTurn?.executionId) {
           setExecutionId(latestTurn.executionId);
         }
+
+        const mission = await fetchActiveMission();
+        setMissionRecord(mission && mission.sessionId === restored.sessionId ? mission : null);
       })
       .catch((restoreError) => {
         setError(
@@ -145,6 +215,8 @@ export function JarvisClient({
           if (record.sessionId) {
             const nextSession = await fetchCommandSession(record.sessionId);
             setSession(nextSession);
+            const mission = await fetchActiveMission();
+            setMissionRecord(mission && mission.sessionId === nextSession.sessionId ? mission : null);
           }
 
           if (
@@ -190,6 +262,8 @@ export function JarvisClient({
         setInput("");
         const nextSession = await fetchCommandSession(result.sessionId);
         setSession(nextSession);
+        const mission = await fetchActiveMission();
+        setMissionRecord(mission && mission.sessionId === result.sessionId ? mission : null);
       })
       .catch((planError) => {
         setError(planError instanceof Error ? planError.message : "Unknown Jarvis error.");
@@ -197,45 +271,86 @@ export function JarvisClient({
       .finally(() => setLoading(false));
   };
 
+  const startExecutionForPlan = async (nextPlan: CommandPlan, nextTurnId: string | null) => {
+    const primaryPackage = nextPlan.launchPackages.find((item) => item.fit === "primary");
+
+    if (!primaryPackage) {
+      throw new Error("Jarvis did not produce a primary execution package.");
+    }
+
+    setExecuting(true);
+    setExecutionRecord(null);
+    setExecutionMessage(null);
+    setError(null);
+
+    const result = await executeLaunchPackage({
+      provider: primaryPackage.ai.toLowerCase(),
+      room: primaryPackage.room,
+      intent: nextPlan.classification.intent,
+      request: nextPlan.request,
+      prompt: primaryPackage.prompt,
+      sessionId,
+      turnId: nextTurnId
+    });
+
+    setExecutionId(result.executionId);
+    if (result.recoveryNotes?.length) {
+      setExecutionMessage(result.recoveryNotes[result.recoveryNotes.length - 1] ?? null);
+    } else if (result.fallbackFrom) {
+      setExecutionMessage(
+        `Jarvis switched from ${result.fallbackFrom} to ${result.providerUsed} because the primary provider was not ready.`
+      );
+    } else {
+      setExecutionMessage(`Executing with ${result.providerUsed}.`);
+    }
+  };
+
   const handleExecute = () => {
     if (!plan) {
       return;
     }
 
-    const primaryPackage = plan.launchPackages.find((item) => item.fit === "primary");
+    startExecutionForPlan(plan, turnId).catch((executionError) => {
+      setError(
+        executionError instanceof Error
+          ? executionError.message
+          : "Unknown execution error."
+      );
+      setExecuting(false);
+    });
+  };
 
-    if (!primaryPackage) {
-      setError("Jarvis did not produce a primary execution package.");
-      return;
-    }
-
-    setExecuting(true);
-    setExecutionRecord(null);
+  const handleContinueMission = () => {
+    setLoading(true);
     setError(null);
 
-    executeLaunchPackage({
-      provider: primaryPackage.ai.toLowerCase(),
-      room: primaryPackage.room,
-      intent: plan.classification.intent,
-      request: latestTurn?.request ?? plan.request,
-      prompt: primaryPackage.prompt,
-      sessionId,
-      turnId
-    })
-      .then((result) => {
-        setExecutionId(result.executionId);
+    continueMission({ sessionId })
+      .then(async (result) => {
+        setPlan(result.plan);
+        setSessionId(result.sessionId);
+        setTurnId(result.turnId);
+        const nextSession = await fetchCommandSession(result.sessionId);
+        setSession(nextSession);
+        const mission = await fetchActiveMission();
+        setMissionRecord(mission && mission.sessionId === result.sessionId ? mission : null);
+        await startExecutionForPlan(result.plan, result.turnId);
       })
-      .catch((executionError) => {
+      .catch((continueError) => {
         setError(
-          executionError instanceof Error
-            ? executionError.message
-            : "Unknown execution error."
+          continueError instanceof Error
+            ? continueError.message
+            : "Jarvis could not continue the mission."
         );
         setExecuting(false);
-      });
+      })
+      .finally(() => setLoading(false));
   };
 
   const latestTurn = session?.turns.at(-1) ?? null;
+  const primaryPackage = plan?.launchPackages.find((item) => item.fit === "primary") ?? null;
+  const primaryProviderStatus = primaryPackage
+    ? providerStatuses.find((status) => status.name === primaryPackage.ai.toLowerCase())
+    : null;
 
   return (
     <div className="grid">
@@ -256,8 +371,17 @@ export function JarvisClient({
             {loading ? "Thinking..." : "Ask Jarvis"}
           </button>
           {plan ? (
-            <button className="primary-button" onClick={handleExecute} disabled={executing}>
+            <button
+              className="primary-button"
+              onClick={handleExecute}
+              disabled={executing || (primaryProviderStatus ? !primaryProviderStatus.ready : false)}
+            >
               {executing ? "Executing..." : "Execute latest move"}
+            </button>
+          ) : null}
+          {(plan?.runtimeContext.canContinue || missionRecord?.canContinue) ? (
+            <button className="primary-button" onClick={handleContinueMission} disabled={loading || executing}>
+              {loading ? "Continuing..." : "Continue mission"}
             </button>
           ) : null}
           {sessionId ? (
@@ -274,7 +398,24 @@ export function JarvisClient({
           ))}
         </div>
         {sessionId ? <p className="meta">Session: {sessionId}</p> : null}
+        {executionMessage ? <p className="meta">{executionMessage}</p> : null}
+        {primaryProviderStatus && !primaryProviderStatus.ready ? (
+          <p className="error-text">
+            Primary provider unavailable: {primaryProviderStatus.name} ({primaryProviderStatus.reason})
+          </p>
+        ) : null}
         {error ? <p className="error-text">{error}</p> : null}
+      </section>
+
+      <section className="panel jarvis-panel">
+        <h2>Provider readiness</h2>
+        <ul className="list">
+          {providerStatuses.map((provider) => (
+            <li key={provider.name}>
+              {provider.name}: {provider.ready ? "ready" : provider.reason}
+            </li>
+          ))}
+        </ul>
       </section>
 
       <section className="panel jarvis-panel">
@@ -302,16 +443,37 @@ export function JarvisClient({
           <section className="panel jarvis-panel">
             <h2>Mission continuity</h2>
             <ul className="list">
+              <li>Mission state: {plan.runtimeContext.missionState}</li>
+              <li>{plan.runtimeContext.missionDirective}</li>
+              {plan.runtimeContext.objective ? <li>Objective: {plan.runtimeContext.objective}</li> : null}
+              {plan.runtimeContext.missionFocus ? (
+                <li>Mission focus: {plan.runtimeContext.missionFocus}</li>
+              ) : null}
+              <li>Continue eligible: {plan.runtimeContext.canContinue ? "yes" : "no"}</li>
               <li>Session: {plan.runtimeContext.sessionId ?? "new session"}</li>
               <li>
                 Latest execution: {plan.runtimeContext.latestExecutionStatus ?? "no execution yet"}
               </li>
             </ul>
             <ul className="list">
+              {plan.runtimeContext.ambiguitySignals.length > 0 ? (
+                plan.runtimeContext.ambiguitySignals.map((signal) => <li key={signal}>{signal}</li>)
+              ) : (
+                <li>No mission ambiguity surfaced yet.</li>
+              )}
+            </ul>
+            <ul className="list">
               {plan.runtimeContext.activeTasks.length > 0 ? (
                 plan.runtimeContext.activeTasks.map((task) => <li key={task}>{task}</li>)
               ) : (
                 <li>No active tasks surfaced yet.</li>
+              )}
+            </ul>
+            <ul className="list">
+              {plan.runtimeContext.recoverySignals.length > 0 ? (
+                plan.runtimeContext.recoverySignals.map((signal) => <li key={signal}>{signal}</li>)
+              ) : (
+                <li>No recovery actions needed yet.</li>
               )}
             </ul>
           </section>
@@ -342,9 +504,22 @@ export function JarvisClient({
           <h2>Current runtime state</h2>
           <ul className="list">
             <li>Last turn: {latestTurn.request}</li>
-            <li>Execution status: {latestTurn.executionStatus ?? "not started"}</li>
+            <li>
+              Execution status: {latestTurn.executionStatus ?? "not started"}
+              {executionRecord ? ` via ${executionRecord.provider}` : ""}
+            </li>
             <li>Execution id: {latestTurn.executionId ?? "none"}</li>
+            {executionRecord?.retryCount ? (
+              <li>Retries used: {executionRecord.retryCount}</li>
+            ) : null}
           </ul>
+          {executionRecord?.recoveryNotes.length ? (
+            <ul className="list">
+              {executionRecord.recoveryNotes.map((note) => (
+                <li key={note}>{note}</li>
+              ))}
+            </ul>
+          ) : null}
           {executionRecord?.status === "completed" && executionRecord.outputPath ? (
             <p>
               <Link href={`/artifacts/${executionRecord.outputPath}?view=file` as Route}>

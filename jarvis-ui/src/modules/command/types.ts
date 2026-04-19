@@ -48,9 +48,17 @@ export type CommandPlan = {
   recommendation: CommandRecommendation;
   runtimeContext: {
     sessionId: string | null;
+    missionId: string | null;
+    objective: string | null;
+    missionState: "idle" | "advancing" | "recovery" | "blocked";
+    missionDirective: string;
+    missionFocus: string | null;
+    ambiguitySignals: string[];
+    canContinue: boolean;
     activeTasks: string[];
     recentTurns: string[];
     latestExecutionStatus: string | null;
+    recoverySignals: string[];
   };
   projectState: {
     handoffSummary: string[];

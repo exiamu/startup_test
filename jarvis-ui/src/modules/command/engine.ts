@@ -3,7 +3,12 @@ import { promises as fs } from "node:fs";
 
 import { resolveInsideNexus, resolveNexusRoot } from "@/lib/nexus-path";
 import { readOverviewState } from "@/modules/nexus-adapter/reader";
-import { readCommandSession, readTaskRecord } from "@/modules/nexus-adapter/writer";
+import {
+  readActiveMission,
+  readCommandSession,
+  readExecutionRecord,
+  readTaskRecord
+} from "@/modules/nexus-adapter/writer";
 import { analyzeOnboardingInput } from "@/modules/onboarding/engine";
 import type { OnboardingAnalysis } from "@/modules/onboarding/types";
 import { scanProjectRoot } from "@/modules/project-discovery/reader";
@@ -458,10 +463,46 @@ function buildRecommendation(
   request: string,
   contract: RoomAiContractEntry[],
   onboarding: OnboardingAnalysis | null,
-  scan: ProjectScan
+  scan: ProjectScan,
+  runtimeContext: {
+    missionState: "idle" | "advancing" | "recovery" | "blocked";
+    missionFocus: string | null;
+    ambiguitySignals: string[];
+  }
 ): CommandRecommendation {
-  const room = pickRecommendedRoom(classification, request, onboarding, scan);
+  const lower = request.toLowerCase();
+  const isGenericContinuationRequest =
+    !request.trim() ||
+    includesAny(lower, [
+      "what next",
+      "what should happen next",
+      "what now",
+      "continue",
+      "keep going",
+      "next move",
+      "what is the active task"
+    ]);
+
+  const runtimeFocusRoom = runtimeContext.missionFocus?.match(/ via ([^/]+)/)?.[1] ?? null;
+  const runtimeFocusAi = runtimeContext.missionFocus?.match(/\/([^\s[]+)/)?.[1] ?? null;
+
+  const room =
+    isGenericContinuationRequest && runtimeContext.ambiguitySignals.length > 0
+      ? "architect"
+      :
+    isGenericContinuationRequest &&
+    runtimeContext.ambiguitySignals.length === 0 &&
+    runtimeFocusRoom &&
+    runtimeContext.missionState !== "idle"
+      ? runtimeFocusRoom
+      : pickRecommendedRoom(classification, request, onboarding, scan);
   const contractEntry = contract.find((entry) => entry.room === room) ?? DEFAULT_CONTRACT[0];
+  const recommendedAi =
+    isGenericContinuationRequest &&
+    runtimeContext.ambiguitySignals.length === 0 &&
+    runtimeFocusAi
+      ? normalizeAiName(runtimeFocusAi)
+      : contractEntry.defaultAi;
   const sourceBasis = dedupe(
     [
       source === "onboarding"
@@ -470,10 +511,14 @@ function buildRecommendation(
       source === "brownfield"
         ? `Brownfield signal: first recommended action is ${scan.recommendedActions[0]?.title ?? "not yet available"}.`
         : "",
+      runtimeContext.missionFocus && isGenericContinuationRequest
+        ? `Mission focus signal: ${runtimeContext.missionFocus}`
+        : "",
+      ...runtimeContext.ambiguitySignals,
       scan.architectureSignals[0] ? `Repo signal: ${scan.architectureSignals[0]}` : "",
       scan.riskAreas[0] ? `Risk signal: ${scan.riskAreas[0]}` : ""
     ],
-    4
+    6
   );
 
   let reason = `${contractEntry.room} owns ${contractEntry.responsibility}, which matches this command best.`;
@@ -496,11 +541,16 @@ function buildRecommendation(
     reason = "Review and contradiction resolution should stay explicit, so Jarvis is routing this through a judgment-oriented room.";
   } else if (classification.intent === "architecture_task") {
     reason = "Architecture and workflow decisions should stay in the architect room instead of being buried inside an implementation thread.";
+  } else if (isGenericContinuationRequest && runtimeContext.ambiguitySignals.length > 0) {
+    reason =
+      "Multiple active tasks are already open, so Jarvis should stop widening scope and force priority clarification before continuing.";
+  } else if (isGenericContinuationRequest && runtimeContext.missionFocus) {
+    reason = `Jarvis already has active work in motion, so it should continue the current mission focus instead of restarting from scratch.`;
   }
 
   return {
     room,
-    ai: contractEntry.defaultAi,
+    ai: recommendedAi,
     reason,
     contractBasis: `${contractEntry.room} defaults to ${contractEntry.defaultAi}${contractEntry.secondaryAi ? ` with ${contractEntry.secondaryAi} as fallback` : ""}. ${contractEntry.notes ?? ""}`.trim(),
     sourceBasis
@@ -527,15 +577,26 @@ function buildTaskContext(
   onboarding: OnboardingAnalysis | null,
   scan: ProjectScan,
   runtimeContext: {
+    missionState: "idle" | "advancing" | "recovery" | "blocked";
+    objective: string | null;
+    missionDirective: string;
+    missionFocus: string | null;
+    ambiguitySignals: string[];
     activeTasks: string[];
     recentTurns: string[];
     latestExecutionStatus: string | null;
+    recoverySignals: string[];
   }
 ): string[] {
   if (source === "onboarding" && onboarding) {
     return dedupe(
       [
+        `Mission state: ${runtimeContext.missionState}. ${runtimeContext.missionDirective}`,
+        runtimeContext.objective ? `Mission objective: ${runtimeContext.objective}` : "",
+        runtimeContext.missionFocus ? `Mission focus: ${runtimeContext.missionFocus}` : "",
+        ...runtimeContext.ambiguitySignals,
         ...runtimeContext.activeTasks,
+        ...runtimeContext.recoverySignals,
         ...onboarding.commanderModel.firstExecutionSlice,
         ...onboarding.commanderModel.blockingDecisions,
         ...onboarding.draftPreview.nextActions
@@ -547,7 +608,12 @@ function buildTaskContext(
   if (source === "brownfield") {
     return dedupe(
       [
+        `Mission state: ${runtimeContext.missionState}. ${runtimeContext.missionDirective}`,
+        runtimeContext.objective ? `Mission objective: ${runtimeContext.objective}` : "",
+        runtimeContext.missionFocus ? `Mission focus: ${runtimeContext.missionFocus}` : "",
+        ...runtimeContext.ambiguitySignals,
         ...runtimeContext.activeTasks,
+        ...runtimeContext.recoverySignals,
         ...scan.architectureSignals,
         ...scan.unresolvedQuestions,
         ...scan.recommendedActions.map((action) => `${action.title}: ${action.reason}`)
@@ -558,8 +624,13 @@ function buildTaskContext(
 
   return dedupe(
     [
+      `Mission state: ${runtimeContext.missionState}. ${runtimeContext.missionDirective}`,
+      runtimeContext.objective ? `Mission objective: ${runtimeContext.objective}` : "",
+      runtimeContext.missionFocus ? `Mission focus: ${runtimeContext.missionFocus}` : "",
+      ...runtimeContext.ambiguitySignals,
       request ? `Commander request: ${request.trim()}` : "",
       ...runtimeContext.activeTasks,
+      ...runtimeContext.recoverySignals,
       ...runtimeContext.recentTurns,
       runtimeContext.latestExecutionStatus
         ? `Latest execution status: ${runtimeContext.latestExecutionStatus}`
@@ -575,27 +646,54 @@ function buildTaskContext(
 
 async function buildRuntimeContext(sessionId?: string | null): Promise<{
   sessionId: string | null;
+  missionId: string | null;
+  objective: string | null;
+  missionState: "idle" | "advancing" | "recovery" | "blocked";
+  missionDirective: string;
+  missionFocus: string | null;
+  ambiguitySignals: string[];
+  canContinue: boolean;
   activeTasks: string[];
   recentTurns: string[];
   latestExecutionStatus: string | null;
+  recoverySignals: string[];
 }> {
   if (!sessionId) {
     return {
       sessionId: null,
+      missionId: null,
+      objective: null,
+      missionState: "idle",
+      missionDirective: "No active mission exists yet. Shape the next bounded move.",
+      missionFocus: null,
+      ambiguitySignals: [],
+      canContinue: false,
       activeTasks: [],
       recentTurns: [],
-      latestExecutionStatus: null
+      latestExecutionStatus: null,
+      recoverySignals: []
     };
   }
 
-  const session = await readCommandSession(sessionId);
+  const [session, activeMission] = await Promise.all([
+    readCommandSession(sessionId),
+    readActiveMission()
+  ]);
 
   if (!session) {
     return {
       sessionId,
+      missionId: null,
+      objective: null,
+      missionState: "idle",
+      missionDirective: "No persisted mission state was found. Re-establish the next bounded move.",
+      missionFocus: null,
+      ambiguitySignals: [],
+      canContinue: false,
       activeTasks: [],
       recentTurns: [],
-      latestExecutionStatus: null
+      latestExecutionStatus: null,
+      recoverySignals: []
     };
   }
 
@@ -618,12 +716,68 @@ async function buildRuntimeContext(sessionId?: string | null): Promise<{
 
   const latestExecutionStatus =
     [...session.turns].reverse().find((turn) => turn.executionStatus)?.executionStatus ?? null;
+  const latestExecutionId =
+    [...session.turns].reverse().find((turn) => turn.executionId)?.executionId ?? null;
+  const latestExecution = latestExecutionId
+    ? await readExecutionRecord(latestExecutionId)
+    : null;
+  const activeTaskRecords = tasks
+    .filter((task) => task.status !== "completed" && task.status !== "failed")
+    .slice(-3);
+  const recoverySignals = dedupe(
+    [
+      ...tasks
+        .filter((task) => task.status === "failed" || task.status === "blocked")
+        .slice(-3)
+        .map((task) => {
+          const detail = task.errorMessage ? `: ${task.errorMessage}` : "";
+          return `Recovery needed for task "${task.title}" [${task.status}]${detail}`;
+        }),
+      ...(latestExecution?.recoveryNotes ?? [])
+    ],
+    6
+  );
+  const missionState =
+    recoverySignals.length > 0
+      ? latestExecutionStatus === "failed" || latestExecutionStatus === "blocked"
+        ? "blocked"
+        : "recovery"
+      : activeTasks.length > 0 || latestExecutionStatus === "running" || latestExecutionStatus === "planned"
+        ? "advancing"
+        : "idle";
+  const missionDirective =
+    missionState === "blocked"
+      ? "Current work is blocked. Repair or reroute the active task before widening scope."
+      : missionState === "recovery"
+        ? "Recovery is in progress. Let Jarvis stabilize the current task before starting unrelated work."
+        : missionState === "advancing"
+        ? "A mission is already in motion. Continue or refine the active task instead of restarting from scratch."
+        : "No mission is in flight. Shape the next bounded move.";
+  const ambiguitySignals =
+    activeTaskRecords.length > 1
+      ? [
+          `Multiple active tasks are open (${activeTaskRecords.length}). Jarvis should confirm priority before widening or rerouting work.`
+        ]
+      : [];
+  const focusTask =
+    activeTaskRecords.length === 1 ? activeTaskRecords[0] : null;
+  const missionFocus = focusTask
+    ? `${focusTask.title} via ${focusTask.room}/${focusTask.provider} [${focusTask.status}]`
+    : null;
 
   return {
     sessionId: session.sessionId,
+    missionId: activeMission?.sessionId === session.sessionId ? activeMission.missionId : null,
+    objective: activeMission?.sessionId === session.sessionId ? activeMission.objective : null,
+    missionState,
+    missionDirective,
+    missionFocus,
+    ambiguitySignals,
+    canContinue: activeMission?.sessionId === session.sessionId ? activeMission.canContinue : false,
     activeTasks,
     recentTurns,
-    latestExecutionStatus
+    latestExecutionStatus,
+    recoverySignals
   };
 }
 
@@ -758,8 +912,58 @@ function buildNextMoves(
   classification: CommandClassification,
   recommendation: CommandRecommendation,
   onboarding: OnboardingAnalysis | null,
-  scan: ProjectScan
+  scan: ProjectScan,
+  runtimeContext: {
+    missionState: "idle" | "advancing" | "recovery" | "blocked";
+    objective: string | null;
+    missionDirective: string;
+    missionFocus: string | null;
+    ambiguitySignals: string[];
+    canContinue: boolean;
+    recoverySignals: string[];
+    latestExecutionStatus: string | null;
+  }
 ): string[] {
+  if (runtimeContext.ambiguitySignals.length > 0) {
+    return dedupe(
+      [
+        `Mission state: ${runtimeContext.missionState}. ${runtimeContext.missionDirective}`,
+        ...(runtimeContext.objective ? [`Mission objective: ${runtimeContext.objective}`] : []),
+        ...runtimeContext.ambiguitySignals,
+        "Ask the commander to choose which active task should remain primary before routing more work.",
+        "Do not widen scope until the active priority is explicit."
+      ],
+      5
+    );
+  }
+
+  if (runtimeContext.recoverySignals.length > 0) {
+    return dedupe(
+      [
+        `Mission state: ${runtimeContext.missionState}. ${runtimeContext.missionDirective}`,
+        runtimeContext.objective ? `Mission objective: ${runtimeContext.objective}` : "",
+        runtimeContext.missionFocus ? `Mission focus: ${runtimeContext.missionFocus}` : "",
+        ...runtimeContext.recoverySignals,
+        `Decide whether Jarvis should retry with ${recommendation.ai}, switch rooms, or ask the commander for clarification.`,
+        `Route the recovery move through ${recommendation.room} + ${recommendation.ai} before widening scope again.`
+      ],
+      5
+    );
+  }
+
+  if (runtimeContext.canContinue) {
+    return dedupe(
+      [
+        `Mission state: ${runtimeContext.missionState}. ${runtimeContext.missionDirective}`,
+        ...(runtimeContext.objective ? [`Mission objective: ${runtimeContext.objective}`] : []),
+        runtimeContext.missionFocus ? `Mission focus: ${runtimeContext.missionFocus}` : "",
+        "Jarvis can safely continue the active mission without waiting for a rewritten commander prompt.",
+        `Continue the current mission through ${recommendation.room} + ${recommendation.ai}.`
+      ],
+      5
+    );
+  }
+
   if (classification.intent === "new_idea" && onboarding) {
     return dedupe(
       [
@@ -786,6 +990,9 @@ function buildNextMoves(
 
   return dedupe(
     [
+      `Mission state: ${runtimeContext.missionState}. ${runtimeContext.missionDirective}`,
+      runtimeContext.objective ? `Mission objective: ${runtimeContext.objective}` : "",
+      runtimeContext.missionFocus ? `Mission focus: ${runtimeContext.missionFocus}` : "",
       `Route this request to ${recommendation.room} + ${recommendation.ai}.`,
       "Use the primary package first and only widen scope if the answer exposes a real blocker.",
       scan.riskAreas[0] ? `Respect this risk first: ${scan.riskAreas[0]}` : ""
@@ -817,7 +1024,8 @@ export async function buildCommandPlan(input: {
     request,
     contract,
     onboarding,
-    scan
+    scan,
+    runtimeContext
   );
   const taskContext = buildTaskContext(source, request, onboarding, scan, runtimeContext);
   const [roomContext, repoTruth] = await Promise.all([
@@ -836,7 +1044,7 @@ export async function buildCommandPlan(input: {
       projectSignals: buildProjectSignals(scan),
       riskAreas: scan.riskAreas.slice(0, 4)
     },
-    nextMoves: buildNextMoves(classification, recommendation, onboarding, scan),
+    nextMoves: buildNextMoves(classification, recommendation, onboarding, scan, runtimeContext),
     launchPackages: buildLaunchPackages(
       classification,
       recommendation,

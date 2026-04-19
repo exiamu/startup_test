@@ -1,6 +1,8 @@
 import { promises as fs } from "node:fs";
 
 import { resolveInsideNexus, resolveNexusRoot } from "@/lib/nexus-path";
+import { readActiveMission } from "@/modules/nexus-adapter/writer";
+
 import type {
   ArtifactDirectoryState,
   ArtifactNode,
@@ -252,6 +254,7 @@ export async function readQueueState(): Promise<QueueState> {
 
   return {
     inboxCounts,
+    activeMission: await readActiveMission(),
     outboxCounts,
     recentTasks: tasks
       .filter((task): task is TaskRecord => Boolean(task))
@@ -271,12 +274,37 @@ export async function readQueueState(): Promise<QueueState> {
       .filter((session): session is CommandSessionRecord => Boolean(session))
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
       .slice(0, 8)
-      .map((session) => ({
-        sessionId: session.sessionId,
-        updatedAt: session.updatedAt,
-        turnCount: session.turns.length,
-        lastRequest: session.lastRequest
-      })),
+      .map((session) => {
+        const sessionTasks = tasks
+          .filter((task): task is TaskRecord => Boolean(task))
+          .filter((task) => task.sessionId === session.sessionId);
+        const activeTasks = sessionTasks.filter(
+          (task) => task.status !== "completed" && task.status !== "failed"
+        );
+        const blockedTasks = sessionTasks.filter(
+          (task) => task.status === "blocked" || task.status === "failed"
+        );
+        const missionState =
+          blockedTasks.length > 0
+            ? "blocked"
+            : activeTasks.length > 0
+              ? "advancing"
+              : "idle";
+
+        return {
+          sessionId: session.sessionId,
+          updatedAt: session.updatedAt,
+          turnCount: session.turns.length,
+          lastRequest: session.lastRequest,
+          missionState,
+          missionFocus:
+            activeTasks[0]
+              ? `${activeTasks[0].title} via ${activeTasks[0].room}/${activeTasks[0].provider}`
+              : blockedTasks[0]
+                ? `${blockedTasks[0].title} via ${blockedTasks[0].room}/${blockedTasks[0].provider}`
+                : null
+        };
+      }),
     recentExecutions: executions
       .filter((execution): execution is ExecutionRecord => Boolean(execution))
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt))

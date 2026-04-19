@@ -3,10 +3,12 @@ import { promises as fs } from "node:fs";
 
 import { resolveInsideNexus } from "@/lib/nexus-path";
 import type {
+  ActiveMissionRecord,
   CommandSessionRecord,
   CommandSessionTurn,
   ExecutionRecord,
   ExecutionStatus,
+  MissionState,
   TaskRecord,
   TaskStatus
 } from "@/modules/nexus-adapter/types";
@@ -27,6 +29,34 @@ function getSessionRecordPath(sessionId: string): string {
 
 function getTaskRecordPath(taskId: string): string {
   return resolveInsideNexus("tasks", `${taskId}.json`);
+}
+
+function getActiveMissionPath(): string {
+  return resolveInsideNexus("mission", "active.json");
+}
+
+function deriveMissionDirective(missionState: MissionState): string {
+  if (missionState === "blocked") {
+    return "Current work is blocked. Repair or reroute the active task before widening scope.";
+  }
+
+  if (missionState === "recovery") {
+    return "Recovery is in progress. Let Jarvis stabilize the current task before starting unrelated work.";
+  }
+
+  if (missionState === "advancing") {
+    return "A mission is already in motion. Continue or refine the active task instead of restarting from scratch.";
+  }
+
+  return "No mission is in flight. Shape the next bounded move.";
+}
+
+function deriveObjective(session: CommandSessionRecord): string {
+  return session.turns[0]?.request ?? session.lastRequest ?? "No active objective recorded yet.";
+}
+
+function dedupe(items: string[]): string[] {
+  return [...new Set(items.filter(Boolean))];
 }
 
 export async function writeExecutionRecord(record: ExecutionRecord): Promise<void> {
@@ -57,6 +87,20 @@ export async function writeTaskRecord(task: TaskRecord): Promise<void> {
   await fs.writeFile(taskPath, JSON.stringify(task, null, 2), "utf8");
 }
 
+export async function writeActiveMission(record: ActiveMissionRecord): Promise<void> {
+  await ensureDirectory(["mission"]);
+  const missionPath = getActiveMissionPath();
+  await fs.writeFile(missionPath, JSON.stringify(record, null, 2), "utf8");
+}
+
+export async function clearActiveMission(): Promise<void> {
+  try {
+    await fs.unlink(getActiveMissionPath());
+  } catch {
+    // Nothing to clear.
+  }
+}
+
 export async function readCommandSession(
   sessionId: string
 ): Promise<CommandSessionRecord | null> {
@@ -77,6 +121,103 @@ export async function readTaskRecord(taskId: string): Promise<TaskRecord | null>
   } catch {
     return null;
   }
+}
+
+export async function readActiveMission(): Promise<ActiveMissionRecord | null> {
+  try {
+    const raw = await fs.readFile(getActiveMissionPath(), "utf8");
+    return JSON.parse(raw) as ActiveMissionRecord;
+  } catch {
+    return null;
+  }
+}
+
+export async function syncActiveMissionForSession(
+  sessionId: string
+): Promise<ActiveMissionRecord | null> {
+  const session = await readCommandSession(sessionId);
+
+  if (!session) {
+    return null;
+  }
+
+  const taskIds = session.turns
+    .map((turn) => turn.taskId)
+    .filter((taskId): taskId is string => Boolean(taskId));
+  const tasks = (
+    await Promise.all(taskIds.map((taskId) => readTaskRecord(taskId)))
+  ).filter((task): task is TaskRecord => Boolean(task));
+
+  const activeTasks = tasks.filter(
+    (task) => task.status !== "completed" && task.status !== "failed"
+  );
+  const blockedTasks = tasks.filter(
+    (task) => task.status === "failed" || task.status === "blocked"
+  );
+  const latestTurn = session.turns.at(-1) ?? null;
+  const latestExecution = latestTurn?.executionId
+    ? await readExecutionRecord(latestTurn.executionId)
+    : null;
+  const recoverySignals = dedupe([
+    ...blockedTasks.map((task) => {
+      const detail = task.errorMessage ? `: ${task.errorMessage}` : "";
+      return `Recovery needed for task "${task.title}" [${task.status}]${detail}`;
+    }),
+    ...(latestExecution?.recoveryNotes ?? [])
+  ]).slice(0, 6);
+
+  const missionState: MissionState =
+    recoverySignals.length > 0
+      ? latestTurn?.executionStatus === "failed" || latestTurn?.executionStatus === "blocked"
+        ? "blocked"
+        : "recovery"
+      : activeTasks.length > 0 || latestTurn?.executionStatus === "running" || latestTurn?.executionStatus === "planned"
+        ? "advancing"
+        : "idle";
+
+  const ambiguitySignals =
+    activeTasks.length > 1
+      ? [
+          `Multiple active tasks are open (${activeTasks.length}). Jarvis should confirm priority before widening or rerouting work.`
+        ]
+      : [];
+
+  const focusTask =
+    activeTasks.length === 1
+      ? activeTasks[0]
+      : blockedTasks.length === 1
+        ? blockedTasks[0]
+        : null;
+
+  const record: ActiveMissionRecord = {
+    missionId: `mission-${session.sessionId}`,
+    sessionId: session.sessionId,
+    objective: deriveObjective(session),
+    missionState,
+    missionDirective: deriveMissionDirective(missionState),
+    missionFocus: focusTask
+      ? `${focusTask.title} via ${focusTask.room}/${focusTask.provider} [${focusTask.status}]`
+      : null,
+    ambiguitySignals,
+    recoverySignals,
+    activeTaskIds: activeTasks.map((task) => task.taskId),
+    focusTaskId: focusTask?.taskId ?? null,
+    latestTurnId: latestTurn?.turnId ?? null,
+    latestExecutionId: latestTurn?.executionId ?? null,
+    latestExecutionStatus: latestTurn?.executionStatus ?? null,
+    recommendedRoom: latestTurn?.recommendedRoom ?? focusTask?.room ?? null,
+    recommendedAi: latestTurn?.recommendedAi ?? null,
+    canContinue:
+      missionState === "advancing" &&
+      activeTasks.length === 1 &&
+      ambiguitySignals.length === 0 &&
+      latestTurn?.executionStatus !== "failed" &&
+      latestTurn?.executionStatus !== "blocked",
+    updatedAt: new Date().toISOString()
+  };
+
+  await writeActiveMission(record);
+  return record;
 }
 
 export async function createCommandSession(
@@ -129,6 +270,7 @@ export async function appendCommandSessionTurn(input: {
   };
 
   await writeCommandSession(updatedSession);
+  await syncActiveMissionForSession(updatedSession.sessionId);
   return { session: updatedSession, turn };
 }
 
@@ -161,6 +303,9 @@ export async function createTaskRecord(input: {
   };
 
   await writeTaskRecord(task);
+  if (task.sessionId) {
+    await syncActiveMissionForSession(task.sessionId);
+  }
   return task;
 }
 
@@ -189,6 +334,7 @@ export async function attachTaskToCommandSessionTurn(input: {
   };
 
   await writeCommandSession(updatedSession);
+  await syncActiveMissionForSession(updatedSession.sessionId);
   return updatedSession;
 }
 
@@ -221,6 +367,7 @@ export async function updateCommandSessionTurnExecution(input: {
   };
 
   await writeCommandSession(updatedSession);
+  await syncActiveMissionForSession(updatedSession.sessionId);
   return updatedSession;
 }
 
@@ -228,6 +375,7 @@ export async function updateTaskStatus(input: {
   taskId: string;
   status: TaskStatus;
   executionId?: string;
+  provider?: string;
   outputPath?: string;
   errorMessage?: string;
 }): Promise<TaskRecord> {
@@ -242,6 +390,7 @@ export async function updateTaskStatus(input: {
     ...existing,
     status: input.status,
     executionId: input.executionId ?? existing.executionId,
+    provider: input.provider ?? existing.provider,
     outputPath: input.outputPath ?? existing.outputPath,
     errorMessage: input.errorMessage ?? existing.errorMessage,
     updatedAt: now,
@@ -250,6 +399,50 @@ export async function updateTaskStatus(input: {
   };
 
   await writeTaskRecord(updated);
+  if (updated.sessionId) {
+    await syncActiveMissionForSession(updated.sessionId);
+  }
+  return updated;
+}
+
+export async function updateExecutionRecordMetadata(input: {
+  executionId: string;
+  provider?: string;
+  attemptedProviders?: string[];
+  fallbackFrom?: string | null;
+  retryCount?: number;
+  recoveryNotes?: string[];
+  errorMessage?: string | null;
+}): Promise<ExecutionRecord> {
+  const existing = await readExecutionRecord(input.executionId);
+
+  if (!existing) {
+    throw new Error(`Execution record not found: ${input.executionId}`);
+  }
+
+  const updated: ExecutionRecord = {
+    ...existing,
+    provider: input.provider ?? existing.provider,
+    attemptedProviders: input.attemptedProviders ?? existing.attemptedProviders,
+    fallbackFrom: input.fallbackFrom === undefined ? existing.fallbackFrom : input.fallbackFrom,
+    retryCount: input.retryCount ?? existing.retryCount,
+    recoveryNotes: input.recoveryNotes ?? existing.recoveryNotes,
+    errorMessage: input.errorMessage === undefined ? existing.errorMessage : input.errorMessage
+  };
+
+  await writeExecutionRecord(updated);
+
+  if (updated.taskId) {
+    await updateTaskStatus({
+      taskId: updated.taskId,
+      status: updated.status,
+      executionId: updated.executionId,
+      provider: updated.provider,
+      outputPath: updated.outputPath ?? undefined,
+      errorMessage: updated.errorMessage ?? undefined
+    });
+  }
+
   return updated;
 }
 
@@ -294,6 +487,7 @@ export async function updateExecutionStatus(
       taskId: updated.taskId,
       status: updated.status,
       executionId: updated.executionId,
+      provider: updated.provider,
       outputPath: updated.outputPath ?? undefined,
       errorMessage: updated.errorMessage ?? undefined
     });

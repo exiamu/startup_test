@@ -15,6 +15,8 @@ export type OverviewState = {
   handoffSummary: string[];
 };
 
+export type MissionState = "idle" | "advancing" | "recovery" | "blocked";
+
 export type RoomState = {
   name: string;
   promptExists: boolean;
@@ -34,6 +36,7 @@ export type VaultDocumentState = {
 export type QueueState = {
   inboxCounts: Record<string, number>;
   outboxCounts: Record<string, number>;
+  activeMission: ActiveMissionRecord | null;
   recentTasks: {
     taskId: string;
     title: string;
@@ -49,6 +52,8 @@ export type QueueState = {
     updatedAt: string;
     turnCount: number;
     lastRequest: string | null;
+    missionState: MissionState;
+    missionFocus: string | null;
   }[];
   recentExecutions: {
     executionId: string;
@@ -111,7 +116,10 @@ export type ExecutionRecord = {
   sessionId: string | null;
   turnId: string | null;
   taskId: string | null;
+  requestedProvider: string;
   provider: string;
+  attemptedProviders: string[];
+  fallbackFrom: string | null;
   room: string;
   intent: string;
   prompt: string;
@@ -122,6 +130,7 @@ export type ExecutionRecord = {
   outputPath: string | null;
   errorMessage: string | null;
   retryCount: number;
+  recoveryNotes: string[];
 };
 
 export type CommandSessionTurn = {
@@ -144,4 +153,24 @@ export type CommandSessionRecord = {
   updatedAt: string;
   lastRequest: string | null;
   turns: CommandSessionTurn[];
+};
+
+export type ActiveMissionRecord = {
+  missionId: string;
+  sessionId: string;
+  objective: string;
+  missionState: MissionState;
+  missionDirective: string;
+  missionFocus: string | null;
+  ambiguitySignals: string[];
+  recoverySignals: string[];
+  activeTaskIds: string[];
+  focusTaskId: string | null;
+  latestTurnId: string | null;
+  latestExecutionId: string | null;
+  latestExecutionStatus: ExecutionStatus | null;
+  recommendedRoom: string | null;
+  recommendedAi: string | null;
+  canContinue: boolean;
+  updatedAt: string;
 };

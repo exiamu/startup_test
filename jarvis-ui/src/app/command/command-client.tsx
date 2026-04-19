@@ -5,10 +5,12 @@ import type { Route } from "next";
 import { startTransition, useEffect, useState } from "react";
 
 import type {
+  ActiveMissionRecord,
   CommandSessionRecord,
   ExecutionRecord
 } from "@/modules/nexus-adapter/types";
 import type { CommandPlan, CommandSource, LaunchPackage } from "@/modules/command/types";
+import type { ProviderRuntimeStatus } from "@/modules/providers/types";
 
 async function fetchCommandPlan(input: {
   request: string;
@@ -38,7 +40,13 @@ async function executeLaunchPackage(input: {
   prompt: string;
   sessionId?: string | null;
   turnId?: string | null;
-}): Promise<{ executionId: string; status: string }> {
+}): Promise<{
+  executionId: string;
+  status: string;
+  providerUsed: string;
+  fallbackFrom: string | null;
+  recoveryNotes?: string[];
+}> {
   const response = await fetch("/api/command/execute", {
     method: "POST",
     headers: {
@@ -76,6 +84,53 @@ async function fetchCommandSession(sessionId: string): Promise<CommandSessionRec
   }
 
   return response.json();
+}
+
+async function fetchActiveMission(): Promise<ActiveMissionRecord | null> {
+  const response = await fetch("/api/mission/active", {
+    cache: "no-store"
+  });
+
+  if (response.status === 404) {
+    return null;
+  }
+
+  if (!response.ok) {
+    throw new Error("Failed to read active mission.");
+  }
+
+  return response.json();
+}
+
+async function continueMission(input: {
+  sessionId?: string | null;
+}): Promise<{ sessionId: string; turnId: string; plan: CommandPlan }> {
+  const response = await fetch("/api/command/continue", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(input)
+  });
+
+  if (!response.ok) {
+    throw new Error("Jarvis could not continue the active mission.");
+  }
+
+  return response.json();
+}
+
+async function fetchProviderStatuses(): Promise<ProviderRuntimeStatus[]> {
+  const response = await fetch("/api/providers/status", {
+    cache: "no-store"
+  });
+
+  if (!response.ok) {
+    throw new Error("Failed to read provider readiness.");
+  }
+
+  const body = (await response.json()) as { providers: ProviderRuntimeStatus[] };
+  return body.providers;
 }
 
 function Section({
@@ -125,11 +180,13 @@ function LaunchPackageCard({
   launchPackage,
   executionRecord,
   executing,
+  providerStatus,
   onExecute
 }: {
   launchPackage: LaunchPackage;
   executionRecord: ExecutionRecord | null;
   executing: boolean;
+  providerStatus: ProviderRuntimeStatus | null;
   onExecute: (launchPackage: LaunchPackage) => void;
 }) {
   const [copied, setCopied] = useState(false);
@@ -151,7 +208,11 @@ function LaunchPackageCard({
         </div>
         <div className="actions">
           {launchPackage.fit === "primary" ? (
-            <button className="primary-button" onClick={() => onExecute(launchPackage)} disabled={executing}>
+            <button
+              className="primary-button"
+              onClick={() => onExecute(launchPackage)}
+              disabled={executing || (providerStatus ? !providerStatus.ready : false)}
+            >
               {executing ? "Executing..." : "Execute"}
             </button>
           ) : null}
@@ -162,9 +223,24 @@ function LaunchPackageCard({
       </div>
       <p>{launchPackage.usage}</p>
       <p className="meta">Context used: {launchPackage.contextUsed.join(" · ")}</p>
+      {providerStatus && !providerStatus.ready ? (
+        <p className="error-text">
+          Provider unavailable: {providerStatus.name} ({providerStatus.reason})
+        </p>
+      ) : null}
       {executionRecord ? (
         <div className="meta">
-          <p>Status: {executionRecord.status}</p>
+          <p>
+            Status: {executionRecord.status} via {executionRecord.provider}
+            {executionRecord.retryCount > 0 ? ` · retries ${executionRecord.retryCount}` : ""}
+          </p>
+          {executionRecord.recoveryNotes.length > 0 ? (
+            <ul className="list">
+              {executionRecord.recoveryNotes.map((note) => (
+                <li key={note}>{note}</li>
+              ))}
+            </ul>
+          ) : null}
           {executionRecord.status === "completed" && executionRecord.outputPath ? (
             <p>
               Output:{" "}
@@ -207,9 +283,21 @@ export function CommandClient({
   const [sessionId, setSessionId] = useState<string | null>(initialSessionId);
   const [turnId, setTurnId] = useState<string | null>(null);
   const [sessionRecord, setSessionRecord] = useState<CommandSessionRecord | null>(null);
+  const [missionRecord, setMissionRecord] = useState<ActiveMissionRecord | null>(null);
   const [executionId, setExecutionId] = useState<string | null>(null);
   const [executionRecord, setExecutionRecord] = useState<ExecutionRecord | null>(null);
   const [executingProvider, setExecutingProvider] = useState<string | null>(null);
+  const [providerStatuses, setProviderStatuses] = useState<ProviderRuntimeStatus[]>([]);
+  const [executionMessage, setExecutionMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchProviderStatuses().then(setProviderStatuses).catch(() => {
+      // Keep command mode usable if readiness cannot be read.
+    });
+    fetchActiveMission().then(setMissionRecord).catch(() => {
+      // Keep command mode usable if mission state cannot be read.
+    });
+  }, []);
 
   const runPlan = (nextRequest: string, nextSource: CommandSource) => {
     setLoading(true);
@@ -223,6 +311,8 @@ export function CommandClient({
           setTurnId(result.turnId);
           const nextSession = await fetchCommandSession(result.sessionId);
           setSessionRecord(nextSession);
+          const mission = await fetchActiveMission();
+          setMissionRecord(mission && mission.sessionId === result.sessionId ? mission : null);
         })
         .catch((planError) => {
           setError(planError instanceof Error ? planError.message : "Unknown command error.");
@@ -237,13 +327,16 @@ export function CommandClient({
     }
 
     fetchCommandSession(initialSessionId)
-      .then((session) => {
+      .then(async (session) => {
         setSessionRecord(session);
         const latestTurn = session.turns.at(-1);
 
         if (latestTurn) {
           setRequest(latestTurn.request);
         }
+
+        const mission = await fetchActiveMission();
+        setMissionRecord(mission && mission.sessionId === session.sessionId ? mission : null);
       })
       .catch(() => {
         // If restore fails, keep the page usable rather than blocking.
@@ -279,6 +372,8 @@ export function CommandClient({
           if (record.sessionId) {
             const nextSession = await fetchCommandSession(record.sessionId);
             setSessionRecord(nextSession);
+            const mission = await fetchActiveMission();
+            setMissionRecord(mission && mission.sessionId === nextSession.sessionId ? mission : null);
           }
 
           if (
@@ -304,6 +399,40 @@ export function CommandClient({
     return () => window.clearInterval(intervalId);
   }, [executionId]);
 
+  const startExecutionForPlan = async (nextPlan: CommandPlan, nextTurnId: string | null) => {
+    const primaryPackage = nextPlan.launchPackages.find((item) => item.fit === "primary");
+
+    if (!primaryPackage) {
+      throw new Error("Jarvis did not produce a primary execution package.");
+    }
+
+    setExecutingProvider(primaryPackage.ai.toLowerCase());
+    setExecutionRecord(null);
+    setExecutionMessage(null);
+    setError(null);
+
+    const result = await executeLaunchPackage({
+      provider: primaryPackage.ai.toLowerCase(),
+      room: primaryPackage.room,
+      intent: nextPlan.classification.intent,
+      request: nextPlan.request,
+      prompt: primaryPackage.prompt,
+      sessionId,
+      turnId: nextTurnId
+    });
+
+    setExecutionId(result.executionId);
+    if (result.recoveryNotes?.length) {
+      setExecutionMessage(result.recoveryNotes[result.recoveryNotes.length - 1] ?? null);
+    } else if (result.fallbackFrom) {
+      setExecutionMessage(
+        `Jarvis switched from ${result.fallbackFrom} to ${result.providerUsed} because the primary provider was not ready.`
+      );
+    } else {
+      setExecutionMessage(`Executing with ${result.providerUsed}.`);
+    }
+  };
+
   const handleExecute = (launchPackage: LaunchPackage) => {
     if (!plan) {
       return;
@@ -311,6 +440,7 @@ export function CommandClient({
 
     setExecutingProvider(launchPackage.ai.toLowerCase());
     setExecutionRecord(null);
+    setExecutionMessage(null);
     setError(null);
 
     executeLaunchPackage({
@@ -324,6 +454,15 @@ export function CommandClient({
     })
       .then((result) => {
         setExecutionId(result.executionId);
+        if (result.recoveryNotes?.length) {
+          setExecutionMessage(result.recoveryNotes[result.recoveryNotes.length - 1] ?? null);
+        } else if (result.fallbackFrom) {
+          setExecutionMessage(
+            `Jarvis switched from ${result.fallbackFrom} to ${result.providerUsed} because the primary provider was not ready.`
+          );
+        } else {
+          setExecutionMessage(`Executing with ${result.providerUsed}.`);
+        }
       })
       .catch((executionError) => {
         setError(
@@ -333,6 +472,32 @@ export function CommandClient({
         );
         setExecutingProvider(null);
       });
+  };
+
+  const handleContinueMission = () => {
+    setLoading(true);
+    setError(null);
+
+    continueMission({ sessionId })
+      .then(async (result) => {
+        setPlan(result.plan);
+        setSessionId(result.sessionId);
+        setTurnId(result.turnId);
+        const nextSession = await fetchCommandSession(result.sessionId);
+        setSessionRecord(nextSession);
+        const mission = await fetchActiveMission();
+        setMissionRecord(mission && mission.sessionId === result.sessionId ? mission : null);
+        await startExecutionForPlan(result.plan, result.turnId);
+      })
+      .catch((continueError) => {
+        setError(
+          continueError instanceof Error
+            ? continueError.message
+            : "Jarvis could not continue the mission."
+        );
+        setExecutingProvider(null);
+      })
+      .finally(() => setLoading(false));
   };
 
   return (
@@ -385,6 +550,11 @@ export function CommandClient({
           <Link href={"/start" as Route} className="text-link">
             Return to startup flow
           </Link>
+          {(plan?.runtimeContext.canContinue || missionRecord?.canContinue) ? (
+            <button className="primary-button" onClick={handleContinueMission} disabled={loading || Boolean(executingProvider)}>
+              {loading ? "Continuing..." : "Continue mission"}
+            </button>
+          ) : null}
         </div>
 
         <div className="quick-prompt-row">
@@ -404,6 +574,9 @@ export function CommandClient({
         </div>
 
         {sessionId ? <p className="meta">Active session: {sessionId}</p> : null}
+        {missionRecord?.objective ? <p className="meta">Mission objective: {missionRecord.objective}</p> : null}
+        {missionRecord?.canContinue ? <p className="meta">Jarvis can safely continue the current mission.</p> : null}
+        {executionMessage ? <p className="meta">{executionMessage}</p> : null}
         {error ? <p className="error-text">{error}</p> : null}
       </section>
 
@@ -424,9 +597,16 @@ export function CommandClient({
           </section>
 
           <Section title="Mission continuity" items={[
+            `Mission state: ${plan.runtimeContext.missionState}`,
+            plan.runtimeContext.missionDirective,
+            ...(plan.runtimeContext.objective ? [`Objective: ${plan.runtimeContext.objective}`] : []),
+            ...(plan.runtimeContext.canContinue ? ["Continue eligible: yes"] : ["Continue eligible: no"]),
+            ...(plan.runtimeContext.missionFocus ? [`Mission focus: ${plan.runtimeContext.missionFocus}`] : []),
+            ...plan.runtimeContext.ambiguitySignals,
             `Session: ${plan.runtimeContext.sessionId ?? "new session"}`,
             `Latest execution: ${plan.runtimeContext.latestExecutionStatus ?? "no execution yet"}`,
             ...plan.runtimeContext.activeTasks,
+            ...plan.runtimeContext.recoverySignals,
             ...plan.runtimeContext.recentTurns
           ]} />
 
@@ -440,6 +620,11 @@ export function CommandClient({
             <LaunchPackageCard
               key={launchPackage.ai}
               launchPackage={launchPackage}
+              providerStatus={
+                providerStatuses.find(
+                  (status) => status.name === launchPackage.ai.toLowerCase()
+                ) ?? null
+              }
               executionRecord={
                 executionRecord && executionRecord.provider === launchPackage.ai.toLowerCase()
                   ? executionRecord

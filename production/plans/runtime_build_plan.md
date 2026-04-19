@@ -1,8 +1,8 @@
 # Jarvis Runtime Build Plan
 <!-- Produced by Claude architect session 2026-04-09 -->
-<!-- Status: DRAFT — pending Gemini review and refinement -->
+<!-- Status: ACTIVE — updated through runtime slice 14 -->
 <!-- Owner: Exiamu -->
-<!-- Next action: Send production/outbox/prompts/2026-04-09-gemini-architect-plan-review.md to Gemini for review -->
+<!-- Next action: run a normal-machine browser test of active mission continuation, then design token/budget-aware provider policy -->
 
 ## Purpose
 
@@ -37,7 +37,7 @@ All implementation work stays true to the founding prompt goal: "make this like 
 
 ---
 
-## Status: ACTIVE — Day 1 Maintenance Complete; Reconciled with Gemini Review
+## Status: ACTIVE — Runtime slices 01-14 complete through active mission continuation; next phase is token/budget-aware provider policy
 
 ---
 
@@ -129,15 +129,17 @@ Day 1 maintenance tasks (hardcode removal, lint fix, init.sh portability, .gitig
 
 ## Day-by-Day Schedule (Revised)
 
-| Day | Task | AI |
+| Phase | Task | AI |
 |-----|------|----|
 | 1 | **Done:** Maintenance fixes. **Done:** Provider scripts + Config + Types (Slice 01). | Codex |
 | 2 | **Done:** Backend Execution Runtime (Slice 02): Writer adapter + Async Execute routes. | Codex |
 | 3 | **Done:** Frontend Execution Wiring (Slice 03): `/command` executes, polls status, and runtime bootstrap/health-check are updated. | Codex |
-| 4 | **Current:** Empty-project drop-in test + integration fixes. | Codex |
-| 5 | Session persistence + session reader/writer (Slice 04), but only after the drop-in test path is stable. | Codex |
-| 6 | Commander session UI overhaul (History + Restore). | Codex |
-| 7 | Documentation + Milestone Closure. | Gemini |
+| 4 | **Done:** Session persistence, runtime visibility, direct `/jarvis`, task ledger, and session-aware planning (Slices 04-08). | Codex |
+| 5 | **Done:** Provider readiness, pre-launch fallback, and bounded mid-run recovery (Slices 09-11). | Codex |
+| 6 | **Done:** Mission-manager behavior over sessions, tasks, executions, recovery notes, and ambiguity signals (Slices 12-13). | Codex |
+| 7 | **Done:** Safe active-mission continuation over a single eligible task, plus mission persistence and UI/runtime visibility (Slice 14). | Codex |
+| 8 | **Current:** Validate slice 14 on a normal machine and define token/budget-aware provider policy. | Codex + Gemini |
+| 9 | Later: documentation tightening and milestone closure after the policy slice is stable. | Gemini |
 
 ---
 
@@ -165,8 +167,10 @@ Day 1 maintenance tasks (hardcode removal, lint fix, init.sh portability, .gitig
 - Execute button visible after plan
 - Full build passes: `npm run build`
 
-**After Day 7:**
-- 12-step end-to-end manual test passes
+**After Day 7 / Slice 14:**
+- Active mission persists in `.nexus/mission/active.json`
+- `/jarvis` and `/command` expose an explicit `Continue mission` action only when the mission is safe to continue
+- `/queue` surfaces the active mission contract
 - `bash .nexus/scripts/health-check.sh` passes
 - `npm run build` clean
 

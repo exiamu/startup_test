@@ -9,6 +9,28 @@ export default async function QueuePage() {
   return (
     <div className="grid">
       <section className="panel">
+        <h2>Active mission</h2>
+        {queue.activeMission ? (
+          <ul className="list">
+            <li>Objective: {queue.activeMission.objective}</li>
+            <li>State: {queue.activeMission.missionState}</li>
+            <li>Directive: {queue.activeMission.missionDirective}</li>
+            {queue.activeMission.missionFocus ? <li>Focus: {queue.activeMission.missionFocus}</li> : null}
+            <li>Continue eligible: {queue.activeMission.canContinue ? "yes" : "no"}</li>
+            {queue.activeMission.sessionId ? (
+              <li>
+                <Link href={`/jarvis?sessionId=${queue.activeMission.sessionId}` as Route}>
+                  open mission session
+                </Link>
+              </li>
+            ) : null}
+          </ul>
+        ) : (
+          <p>No active mission recorded yet.</p>
+        )}
+      </section>
+
+      <section className="panel">
         <h2>Inbox</h2>
         <ul className="list">
           {Object.entries(queue.inboxCounts).map(([name, count]) => (
@@ -63,7 +85,8 @@ export default async function QueuePage() {
                 <Link href={`/command?sessionId=${session.sessionId}` as Route}>
                   {session.sessionId}
                 </Link>
-                : {session.turnCount} turns
+                : {session.turnCount} turns · {session.missionState}
+                {session.missionFocus ? ` · ${session.missionFocus}` : ""}
                 {session.lastRequest ? ` · ${session.lastRequest}` : ""}
               </li>
             ))

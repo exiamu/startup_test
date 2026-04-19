@@ -240,7 +240,7 @@ for dir in \
   "agents" \
   "inbox" \
   "outbox/specs" "outbox/prompts" "outbox/reports" "outbox/decisions" \
-  "execution" "sessions" "tasks" \
+  "execution" "sessions" "tasks" "mission" \
   "workflows" \
   "github/workflows" "github/ISSUE_TEMPLATE" \
   "scripts" \

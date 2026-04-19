@@ -22,6 +22,14 @@
 - `/jarvis` now exists as the first direct commander-facing Jarvis surface over the same runtime/session plumbing
 - task records now persist in `.nexus/tasks/` so Jarvis work has a durable unit beyond chat turns and execution files
 - command planning now reads active session/task state so Jarvis can respond with mission continuity instead of only the latest prompt
+- provider readiness is now visible in `/jarvis` and `/command`, and dead execution paths are gated before launch
+- Jarvis can now fall back to the next ready provider when the primary AI is unavailable
+- Jarvis now performs bounded mid-run recovery by retrying once and switching providers when a launched run fails
+- Jarvis planning now carries a mission state (`idle`, `advancing`, `recovery`, `blocked`) and a mission directive instead of treating every turn as a clean slate
+- Jarvis now carries mission focus and ambiguity signals, so continuation requests can keep the current mission moving instead of always re-routing from zero
+- active mission state now persists in `.nexus/mission/active.json` as a repo-local contract over the current session, task focus, execution status, and continue eligibility
+- `/jarvis`, `/command`, and `/queue` now surface the active mission instead of forcing the operator to infer state from raw session history
+- Jarvis now exposes an explicit `Continue mission` action when exactly one active task is in flight and continuation is safe
 - onboarding and brownfield startup now hand off into `/command` instead of stopping at isolated analysis screens
 - startup now exposes `Command` as a first-class path alongside `New` and `Existing`
 - all room `CONTEXT.md` files now carry repo-aligned state instead of mixed init-era placeholders
@@ -45,7 +53,10 @@
 - `jarvis-ui` now also has a direct `/jarvis` conversational surface, but it still routes through the same planning engine rather than a richer autonomous operator loop
 - the runtime now has the beginnings of a true work backbone: sessions, tasks, and executions are linked, but Jarvis still does not reason over that graph autonomously
 - the planning layer is now session-aware, but it still only uses lightweight continuity signals rather than performing deeper autonomous task management
-- there is still no provider fallback, token-budget awareness, or autonomous rerouting/result-ingestion loop
+- the runtime now knows whether providers are runnable and can switch before launch or once after a failed run, but it still lacks policy-rich recovery and autonomous continuation
+- the runtime now has an active mission contract and one safe continuation action, but it still does not yet advance work autonomously on its own policy loop
+- the planner now reacts better to active missions, but the operator still has to explicitly trigger continuation rather than letting Jarvis decide and run the next move itself
+- there is still no token-budget awareness, autonomous rerouting/result-ingestion loop, or true mission manager
 - direct conversation with Jarvis still routes through `/command` planning rather than a richer always-on commander runtime with memory and authority
 - startup `New` and `Existing` paths are useful for first-fit project alignment, but they are only part of the system; Jarvis still needs a default day-to-day command and execution mode to feel like one working assistant
 - the current repo is therefore strongest on protocol scaffolding, startup alignment, and early execution/session plumbing, and weakest on active orchestration
@@ -73,6 +84,12 @@
 - runtime slice 06 is complete: `/jarvis` now provides a direct conversation-style entrypoint for the commander on top of the existing session/runtime layer
 - runtime slice 07 is complete: task records now persist in `.nexus/tasks/` and connect session turns to execution work
 - runtime slice 08 is complete: Jarvis planning now reads session/task/execution continuity and surfaces it in `/jarvis` and `/command`
+- runtime slice 09 is complete: provider readiness is now checked and surfaced before execution in `/jarvis` and `/command`
+- runtime slice 10 is complete: provider fallback now switches execution to the next ready AI when the primary choice is unavailable
+- runtime slice 11 is complete: execution records now persist retry/fallback recovery notes and Jarvis performs one bounded retry/switch loop after a provider fails mid-run
+- runtime slice 12 is complete: the planner now derives a mission state and directive from sessions, tasks, executions, and recovery notes
+- runtime slice 13 is complete: generic continuation requests now preserve mission focus or force priority clarification when multiple active tasks exist
+- runtime slice 14 is complete: active mission state now persists to `.nexus/mission/active.json`, `/jarvis` and `/command` can issue a safe `Continue mission` action, and `/queue` surfaces the live mission contract
 
 ## Known Follow-Up
 - automatic install path itself is implemented, but full online registry success cannot be verified in this sandbox
@@ -82,18 +99,21 @@
 - room context selection is still shallow and should grow more precise as more rooms become active
 - write/approval flows remain intentionally absent to maintain proposal-first behavior
 - provider execution now exists end-to-end through `/command`, and session history now persists in `.nexus/sessions/`, but both still need a real local-machine browser test outside this sandbox
-- token-usage awareness and provider fallback policy do not exist yet
-- Jarvis cannot yet continue work autonomously after choosing a room and AI
+- token-usage awareness still does not exist
+- Jarvis can now continue one safe mission through an explicit action, but it still cannot autonomously decide and execute broader follow-up work without a human trigger
 - a first direct Jarvis chat surface now exists at `/jarvis`, but it is still an early layer over the planning engine rather than a fuller autonomous commander runtime
 - Jarvis still does not synthesize multi-step plans into an active task graph it can continue on its own; the new task ledger is only the first backbone for that
 - Jarvis now sees continuity, but it still does not choose and continue a multi-step mission flow on its own
+- Jarvis now switches when the primary provider is unavailable and can recover once after a failed run, but it still does not manage broader mission-level retry/re-routing policy
+- Jarvis now names the mission state clearly, but it still needs stronger rules for when to continue automatically versus when to stop and ask the commander
+- Jarvis now knows when to keep focus, surface the active mission, and offer a continue action, but it still does not auto-run the next obvious move without commander approval
 - init.sh and health-check.sh now bootstrap and validate the runtime directories and provider-script contract
 - the next unknown is what breaks, if anything, during a real drop-in empty-project test
 - the next unknown is now narrower: whether a normal local machine exposes any live UI/runtime bugs once `/command` is exercised through the browser
 
 ## Next Recommended Work
-1. Run one real manual local-machine test of `/jarvis` plus `/command` execution/session restore outside the sandbox and capture any runtime failures
-2. Fix whatever breaks in that live manual test before widening scope again
-3. Deepen `/jarvis` from session-aware planning into a fuller Jarvis runtime that can actively manage multi-step work over sessions, tasks, and executions
-4. Expand runtime visibility from lightweight inspection into a fuller operations surface once live testing confirms the current flow
-5. Add provider fallback and token-usage policy once the single-provider runtime path is proven
+1. Run one fresh local-machine test of the new active-mission and `Continue mission` flow through `/jarvis`, `/command`, and `/queue`
+2. Add token/budget awareness so Jarvis can choose providers for availability, task fit, and spend limits
+3. Deepen `/jarvis` from explicit continue actions into a policy-driven mission manager that can decide when to proceed, retry, switch providers, or stop for approval
+4. Ingest execution outputs back into mission state so Jarvis can reason over results instead of only statuses
+5. Expand runtime visibility from lightweight inspection into a fuller operations surface once the mission-manager layer starts making real decisions
